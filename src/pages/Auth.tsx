@@ -1,5 +1,5 @@
 // src/pages/Auth.tsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { Mail, Lock, User, Eye, EyeOff, Loader2 } from 'lucide-react';
@@ -16,10 +16,23 @@ const Auth = () => {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true); // start with loading to check token
   const [error, setError] = useState<string | null>(null);
 
   const navigate = useNavigate();
+
+  // Auto-login check on mount
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+
+    if (token) {
+      // Optional: validate token by calling a protected endpoint
+      // For now, we assume if token exists → user is logged in
+      navigate('/home');
+    } else {
+      setIsLoading(false); // no token → show login form
+    }
+  }, [navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,26 +63,37 @@ const Auth = () => {
         : { name, email, password };
 
       const response = await axios.post(`${API_BASE_URL}${endpoint}`, payload);
+
       toast.success(mode === 'login' ? 'Logged in successfully!' : 'Account created! Welcome!', {
         duration: 3000,
       });
-      // Success: save token and redirect
+
+      // Save token and redirect
       localStorage.setItem('token', response.data.token);
       navigate('/home');
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
-      if (err.response?.data?.error) {
-        setError(err.response.data.error);
-      } else if (err.response?.data?.message) {
-        setError(err.response.data.message);
-      } else {
-        setError('An error occurred. Please try again.');
-      }
+      const errorMsg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        'An error occurred. Please try again.';
+
+      toast.error(errorMsg, { duration: 5000 });
+      setError(errorMsg);
     } finally {
       setIsLoading(false);
     }
   };
+
+  // // Show loading spinner while checking token
+  // if (isLoading) {
+  //   return (
+  //     <div className="min-h-screen bg-red-200 flex items-center justify-center">
+  //       <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
+  //     </div>
+  //   );
+  // }
 
   return (
     <div className="min-h-screen bg-red-200 flex items-center justify-center px-4 sm:px-6 lg:px-8 font-poppins">
@@ -86,7 +110,7 @@ const Auth = () => {
           </p>
         </div>
 
-        {/* Simple toggle (no heavy tabs) */}
+        {/* Toggle */}
         <div className="flex justify-center gap-6 pb-6 text-sm">
           <button
             onClick={() => setMode('login')}
@@ -110,7 +134,7 @@ const Auth = () => {
           </button>
         </div>
 
-        {/* Form – compact */}
+        {/* Form */}
         <form onSubmit={handleSubmit} className="px-8 pb-5 space-y-5 bg-sidebar">
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2.5 rounded-lg text-sm">

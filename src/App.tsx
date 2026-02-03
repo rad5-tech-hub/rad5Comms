@@ -1,7 +1,5 @@
 // src/App.tsx
-import { BrowserRouter, Routes, Route,
-  //  Navigate
-   } from 'react-router-dom';
+import { BrowserRouter, Routes, Route} from 'react-router-dom';
 import HomePage from './pages/HomePage'; 
 import { Toaster } from 'sonner';
 import Auth from './pages/Auth';

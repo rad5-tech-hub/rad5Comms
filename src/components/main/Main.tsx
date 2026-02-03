@@ -1,528 +1,138 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // components/main/Main.tsx
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import '../../App.css';
-import {
-  Phone,
-  Video,
-  Settings,
-  Smile,
-  Plus,
-  Send,
-  ChevronDown,
-  ChevronLeft,
-  Paperclip,
-  Mic,
-  Image as ImageIcon,
-  BarChart2,
-} from 'lucide-react';
-import EmojiPicker from 'emoji-picker-react';
-import SettingsModal from '../../pages/Settings'; 
-import Skeleton from 'react-loading-skeleton';
-import 'react-loading-skeleton/dist/skeleton.css';
+import axios from 'axios';
+import { toast } from 'sonner';
+import ChatHeader from './ChatHeader';
+import ChatPlaceholder from './ChatPlaceholder';
+import MessageList from './MessageList';
+import MessageInput from './MessageInput';
+import SettingsModal from '../../pages/Settings';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 interface MainProps {
   isThreadOpen: boolean;
   toggleThreadPane: () => void;
-  onBack?: () => void;  
+  onBack?: () => void;
+  selectedChat: { id: string; type: 'channel' | 'dm'; name?: string } | null;
 }
 
-const Main = ({ isThreadOpen, toggleThreadPane, onBack }: MainProps) => {
-  const [message, setMessage] = useState('');
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [showPlusMenu, setShowPlusMenu] = useState(false);
+interface Message {
+  id: string;
+  sender: { id: string; name: string; avatar?: string };
+  text: string;
+  time: string;
+  isOwn: boolean;
+  hasImage?: boolean;
+  hasAudio?: boolean;
+  duration?: string;
+}
 
-  const pickerRef = useRef<HTMLDivElement>(null);
-  const plusMenuRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProps) => {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Loading state for messages
-  const [isLoading, setIsLoading] = useState(true);
-
+  // Fetch messages
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 1400);
+  if (!selectedChat) {
+    setMessages([]);
+    setIsLoadingMessages(false);
+    return;
+  }
 
-    return () => clearTimeout(timer);
-  }, []);
+  const initAndFetchMessages = async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      toast.error('Please log in');
+      return;
+    }
 
-  // Close pickers/menus on outside click
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (pickerRef.current && !pickerRef.current.contains(target)) {
-        setShowEmojiPicker(false);
+    setIsLoadingMessages(true);
+
+    try {
+      let chatId = selectedChat.id;
+      let endpointBase = '';
+
+      if (selectedChat.type === 'channel') {
+        endpointBase = `/channels/${chatId}`;
+      } else {
+        // DM: ensure personal chat exists
+        try {
+          // Step 1: Try to create/init personal chat (idempotent or returns existing)
+          const createRes = await axios.post(
+            `${API_BASE_URL}/channels/personal/${selectedChat.id}`,
+            {}, // empty body or { name: selectedChat.name } if needed
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+
+          // If backend returns the chat object with ID (or just 201)
+          chatId = createRes.data?.id || selectedChat.id;
+          endpointBase = `/channels/personal/${chatId}`;
+        } catch (createErr: any) {
+          if (createErr.response?.status !== 409 && createErr.response?.status !== 400) {
+            // 409 = already exists (common), ignore
+            throw createErr;
+          }
+          // Already exists → proceed with original ID
+          endpointBase = `/channels/personal/${selectedChat.id}`;
+        }
       }
-      if (plusMenuRef.current && !plusMenuRef.current.contains(target)) {
-        setShowPlusMenu(false);
+
+      // Step 2: Fetch messages
+      const response = await axios.get(`${API_BASE_URL}${endpointBase}/messages`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const data = response.data?.messages || response.data || [];
+      setMessages(Array.isArray(data) ? data : []);
+
+    } catch (err: any) {
+      console.error('DM init/fetch error:', err);
+      const msg = err.response?.data?.error || 'Failed to load or initialize chat';
+      toast.error(msg);
+
+      if (err.response?.status === 404) {
+        // If backend still says not found after create attempt
+        setMessages([]);
       }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleEmojiClick = (emojiData: any) => {
-    setMessage((prev) => prev + emojiData.emoji);
-    setShowEmojiPicker(false);
-    inputRef.current?.focus();
+    } finally {
+      setIsLoadingMessages(false);
+    }
   };
 
-  const handleAttachFile = () => {
-    console.log('Open file picker / upload dialog');
-    setShowPlusMenu(false);
+  initAndFetchMessages();
+}, [selectedChat]);
+
+  const handleMessageSent = (newMessage: Message) => {
+    setMessages((prev) => [...prev, newMessage]);
   };
-
-  const handleVoiceNote = () => {
-    console.log('Start voice note recording');
-    setShowPlusMenu(false);
-  };
-
-  const handleShareImage = () => {
-    console.log('Open image picker / gallery');
-    setShowPlusMenu(false);
-  };
-
-  const handleCreatePoll = () => {
-    console.log('Open poll creation modal');
-    setShowPlusMenu(false);
-  };
-
-  // Dummy messages (unchanged)
-  const messages = [
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 1,
-      sender: 'UI Art Design',
-      text: 'by the readable content',
-      time: '4:42 PM',
-      isOwn: false,
-      hasImage: true,
-    },
-    {
-      id: 2,
-      sender: 'You',
-      text: 'The point of using Lorem Ipsum',
-      time: '4:45 PM',
-      isOwn: true,
-    },
-    {
-      id: 3,
-      sender: 'Samuel Alex',
-      text: 'There are many variations of passages of Lorem Ipsum available but the majority have suffered alteration 😄',
-      time: '4:50 PM',
-      isOwn: false,
-      hasAudio: true,
-      duration: '4:42',
-    },
-    {
-      id: 4,
-      sender: 'You',
-      text: 'That sounds great 👍',
-      time: '4:52 PM',
-      isOwn: true,
-    },
-  ];
-
-  const enrichedMessages = messages.map((msg, index) => ({
-    ...msg,
-    avatar: msg.isOwn
-      ? null
-      : [
-          'https://images.pexels.com/photos/2379005/pexels-photo-2379005.jpeg',
-          'https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg',
-          'https://images.pexels.com/photos/415829/pexels-photo-415829.jpeg',
-          'https://images.pexels.com/photos/1239291/pexels-photo-1239291.jpeg',
-          'https://images.pexels.com/photos/1043474/pexels-photo-1043474.jpeg',
-        ][index % 5],
-  }));
 
   return (
     <div className="h-screen flex-1 flex flex-col bg-offwhite font-poppins">
-      {/* Header – unchanged */}
-      <div className="flex items-center justify-center mb-2">
-        <header className="h-14 bg-white flex items-center justify-between px-4 shadow-lg w-lg mt-2 rounded-3xl">
-          {onBack && (
-            <button onClick={onBack} className="p-2 -ml-2">
-              <ChevronLeft className="w-6 h-6 text-text-primary" />
-            </button>
-          )}
-          <div className="flex items-center gap-2 lg:gap-3 cursor-pointer " onClick={toggleThreadPane}>
-            <h2 className="font-semibold text-text-primary">#ui-art-design</h2>
-            <ChevronDown className={`w-4 h-4 text-text-secondary transition-transform duration-200 ${
-                isThreadOpen ? 'rotate-180' : 'rotate-0'}`} />
-          </div>
+      <ChatHeader
+        selectedChat={selectedChat}
+        isThreadOpen={isThreadOpen}
+        toggleThreadPane={toggleThreadPane}
+        onBack={onBack}
+        onSettingsOpen={() => setIsSettingsOpen(true)}
+      />
 
-          <div className="flex items-center gap-1 lg:gap-2">
-            <button className="p-2 rounded hover:bg-offwhite transition cursor-pointer">
-              <Phone className="w-4 lg:w-5 h-4 lg:h-5 text-text-secondary" />
-            </button>
-            <button className="p-2 rounded hover:bg-offwhite transition cursor-pointer">
-              <Video className="w-4 lg:w-5 h-4 lg:h-5 text-text-secondary" />
-            </button>
-            <button 
-              className="p-2 rounded hover:bg-offwhite transition cursor-pointer" 
-              onClick={() => setIsSettingsOpen(true)}
-            >
-              <Settings className="w-4 lg:w-5 h-4 lg:h-5 text-text-secondary" />
-            </button>
-          </div>
-        </header>
-      </div>
-
-      {/* Messages Area – now with wider skeletons */}
-      <div className="flex-1 overflow-y-scroll px-6 py-4 space-y-6 scroll">
-        {isLoading ? (
-          Array.from({ length: 17 }).map((_, i) => {
-            const isOwn = i % 5 === 4;
-            return (
-              <div
-                key={i}
-                className={`flex items-start gap-3 ${isOwn ? 'justify-end' : 'justify-start'}`}
-              >
-                {!isOwn && (
-                  <Skeleton 
-                    circle 
-                    width={40}           // wider avatar
-                    height={40} 
-                    className="mt-1 shrink-0" 
-                    baseColor="#1f2937" 
-                    highlightColor="#4b5563" 
-                  />
-                )}
-
-                <div className={`max-w-[85%] ${isOwn ? 'items-end' : 'items-start'}`}> {/* increased max-w for desktop */}
-                  {!isOwn && (
-                    <Skeleton 
-                      width={140}          // wider sender name
-                      height={14} 
-                      className="mb-1" 
-                      baseColor="#1f2937" 
-                      highlightColor="#4b5563" 
-                    />
-                  )}
-
-                  <Skeleton 
-                    height={i % 6 === 0 ? 100 : i % 6 === 1 ? 80 : 60} // taller variety
-                    borderRadius={16} 
-                    className={`
-                      rounded-2xl w-full
-                      ${isOwn 
-                        ? 'rounded-br-none' 
-                        : 'rounded-bl-none border border-slate-200 shadow-sm'}
-                    `}
-                    baseColor="#1f2937" 
-                    highlightColor="#4b5563" 
-                  />
-
-                  {/* Wider image placeholders */}
-                  {i % 4 === 0 && (
-                    <div className="mt-2 grid grid-cols-3 gap-2">
-                      <Skeleton height={110} className="rounded" baseColor="#1f2937" highlightColor="#4b5563" />
-                      <Skeleton height={110} className="rounded" baseColor="#1f2937" highlightColor="#4b5563" />
-                      <Skeleton height={110} className="rounded" baseColor="#1f2937" highlightColor="#4b5563" />
-                    </div>
-                  )}
-
-                  {/* Wider audio placeholder */}
-                  {i % 5 === 2 && (
-                    <div className="mt-2 flex items-center gap-2 bg-gray-100/50 px-4 py-2 rounded-full w-fit">
-                      <Skeleton width={140} height={8} baseColor="#1f2937" highlightColor="#4b5563" />
-                      <Skeleton width={60} height={14} baseColor="#1f2937" highlightColor="#4b5563" />
-                      <Skeleton circle width={24} height={24} baseColor="#1f2937" highlightColor="#4b5563" />
-                    </div>
-                  )}
-
-                  <Skeleton 
-                    width={70}           // wider timestamp
-                    height={14} 
-                    className="mt-1 opacity-70" 
-                    baseColor="#1f2937" 
-                    highlightColor="#4b5563" 
-                  />
-                </div>
-              </div>
-            );
-          })
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {!selectedChat ? (
+          <ChatPlaceholder />
         ) : (
-          enrichedMessages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex items-start gap-3 ${msg.isOwn ? 'justify-end' : 'justify-start'}`}
-            >
-              {!msg.isOwn && msg.avatar && (
-                <img
-                  src={msg.avatar}
-                  alt={msg.sender}
-                  className="w-8 h-8 rounded-full object-cover shrink-0 mt-1"
-                />
-              )}
-
-              <div className={`max-w-[70%] ${msg.isOwn ? 'items-end' : 'items-start'}`}>
-                {!msg.isOwn && (
-                  <div className="text-xs text-text-secondary mb-1">{msg.sender}</div>
-                )}
-
-                <div
-                  className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                    msg.isOwn
-                      ? 'bg-blue text-white rounded-br-none'
-                      : 'bg-white border border-border text-text-primary rounded-bl-none shadow-sm'
-                  }`}
-                >
-                  {msg.text}
-
-                  {msg.hasImage && (
-                    <div className="mt-2 grid grid-cols-3 gap-2">
-                      <div className="h-20 bg-gray-200 rounded" />
-                      <div className="h-20 bg-gray-200 rounded" />
-                      <div className="h-20 bg-gray-200 rounded" />
-                    </div>
-                  )}
-
-                  {msg.hasAudio && (
-                    <div className="mt-2 flex items-center gap-2 bg-black/5 px-3 py-1.5 rounded-full w-fit">
-                      <div className="w-24 h-1 bg-blue/40 rounded-full relative">
-                        <div className="absolute left-0 top-0 h-full w-1/2 bg-blue rounded-full" />
-                      </div>
-                      <span className="text-xs opacity-70">{msg.duration}</span>
-                      <button className="p-1 rounded-full hover:bg-white/20">
-                        <span className="text-xs">▶</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="text-xs text-text-secondary mt-1 opacity-70">
-                  {msg.time}
-                </div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-
-      {/* Input Bar – unchanged */}
-      <div className="border-t border-border bg-gray-300 px-4 py-2 relative flex flex-col items-center justify-center">
-        <div className="h-12 flex items-center lg:gap-2 bg-offwhite rounded-3xl px-2 lg:px-3 py-1 focus-within:ring-2 focus-within:ring-blue/30 w-full">
-          <button
-            className="p-1.5 hover:bg-white/50 rounded cursor-pointer"
-            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-          >
-            <Smile className="w-4 lg:w-5 h-4 lg:h-5 text-text-secondary" />
-          </button>
-
-          <div className="relative">
-            <button
-              className="p-1.5 hover:bg-white/50 rounded cursor-pointer"
-              onClick={() => setShowPlusMenu(!showPlusMenu)}
-            >
-              <Plus className="w-4 lg:w-5 h-4 lg:h-5 text-text-secondary" />
-            </button>
-
-            {showPlusMenu && (
-              <div
-                ref={plusMenuRef}
-                className="absolute bottom-full left-0 mb-0 w-52 lg:w-64 bg-white rounded-lg shadow-2xl border border-border py-2 z-50"
-              >
-                <button
-                  onClick={handleAttachFile}
-                  className="w-full text-left px-4 py-2.5 flex items-center gap-3 text-sm text-text-primary "
-                >
-                  <Paperclip className="w-4 lg:w-5 h-4 lg:h-5 text-text-secondary" />
-                  Attach file
-                </button>
-
-                <button
-                  onClick={handleVoiceNote}
-                  className="w-full text-left px-4 py-2.5 hover:bg-offwhite flex items-center gap-3 text-sm text-text-primary"
-                >
-                  <Mic className="w-4 lg:w-5 h-4 lg:h-5 text-text-secondary" />
-                  Voice note
-                </button>
-
-                <button
-                  onClick={handleShareImage}
-                  className="w-full text-left px-4 py-2.5 hover:bg-offwhite flex items-center gap-3 text-sm text-text-primary"
-                >
-                  <ImageIcon className="w-4 lg:w-5 h-4 lg:h-5 text-text-secondary" />
-                  Share image
-                </button>
-
-                <button
-                  onClick={handleCreatePoll}
-                  className="w-full text-left px-4 py-2.5 hover:bg-offwhite flex items-center gap-3 text-sm text-text-primary"
-                >
-                  <BarChart2 className="w-4 lg:w-5 h-4 lg:h-5 text-text-secondary" />
-                  Create poll
-                </button>
-              </div>
-            )}
-          </div>
-
-          <input
-            ref={inputRef}
-            type="text"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            placeholder="What's on your mind..."
-            className="flex-1 bg-transparent outline-none text-text-primary placeholder:text-text-secondary"
-          />
-
-          <button
-            className={`p-2 rounded-full transition ${
-              message.trim()
-                ? 'text-black hover:text-blue-dark cursor-pointer'
-                : 'text-black cursor-not-allowed'
-            }`}
-            disabled={!message.trim()}
-          >
-            <Send className="w-4 lg:w-5 h-4 lg:h-5" />
-          </button>
-        </div>
-
-        {showEmojiPicker && (
-          <div
-            ref={pickerRef}
-            className="absolute bottom-16 left-0 z-50 shadow-xl"
-          >
-            <EmojiPicker
-              onEmojiClick={handleEmojiClick}
-              width={300}
-              height={390}
-              previewConfig={{ showPreview: false }}
-              lazyLoadEmojis={true}
+          <>
+            <MessageList
+              messages={messages}
+              isLoading={isLoadingMessages}
+              selectedChat={selectedChat}
             />
-          </div>
+
+            <MessageInput selectedChat={selectedChat} onMessageSent={handleMessageSent} />
+          </>
         )}
       </div>
 

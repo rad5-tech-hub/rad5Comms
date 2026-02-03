@@ -1,4 +1,4 @@
-// HomePage.tsx
+// src/pages/HomePage.tsx
 import { useState, useEffect } from 'react';
 import Aside from '../components/aside/Aside';
 import Main from '../components/main/Main';
@@ -11,8 +11,15 @@ function HomePage() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 1000);
   const [activeView, setActiveView] = useState<'aside' | 'main' | 'thread'>('aside');
 
-  // New: global page loading state
+  // Global page loading state
   const [isPageLoading, setIsPageLoading] = useState(true);
+
+  // Selected chat now includes name
+  const [selectedChat, setSelectedChat] = useState<{
+    id: string;
+    type: 'channel' | 'dm';
+    name?: string;
+  } | null>(null);
 
   // Mobile detection
   useEffect(() => {
@@ -28,12 +35,11 @@ function HomePage() {
     return () => window.removeEventListener('resize', handleResize);
   }, [activeView]);
 
-  // Simulate initial page load (replace with real data fetching later)
+  // Simulate initial page load
   useEffect(() => {
-    // Fake delay to show skeleton – in real app, wait for critical data
     const timer = setTimeout(() => {
       setIsPageLoading(false);
-    }, 1800); // 1.8 seconds – feels natural
+    }, 1800);
 
     return () => clearTimeout(timer);
   }, []);
@@ -48,11 +54,10 @@ function HomePage() {
     });
   };
 
-  const handleSelectChat = (chatId: string, type: 'channel' | 'dm') => {
+  const handleSelectChat = (chatId: string, type: 'channel' | 'dm', name?: string) => {
+    setSelectedChat({ id: chatId, type, name });
     if (isMobile) {
       setActiveView('main');
-
-      console.log(`Selected ${type} : ${chatId}`);
     }
   };
 
@@ -66,12 +71,11 @@ function HomePage() {
     ? 'absolute inset-0 transform transition-transform duration-300 ease-in-out'
     : '';
 
-  // Full-page skeleton while page is loading
   if (isPageLoading) {
     return (
       <div className="relative flex h-screen w-screen overflow-hidden bg-offwhite">
-        {/* Skeleton Sidebar (left) */}
-        <div className="w-[280px] min-w-[260px] h-full border-r border-border shrink-0 bg-gray-50">
+        {/* Skeleton Sidebar */}
+        <div className="w-full lg:w-[280px] lg:min-w-[260px] h-full border-r border-border shrink-0 bg-gray-50 px-4">
           <div className="p-4 pb-2 border-b border-gray-200 flex items-center justify-between">
             <div>
               <Skeleton width={160} height={28} baseColor="#1f2937" highlightColor="#4b5563" />
@@ -104,8 +108,8 @@ function HomePage() {
           </div>
         </div>
 
-        {/* Skeleton Main (center) */}
-        <div className="flex-1 flex flex-col">
+        {/* Skeleton Main */}
+        <div className="hidden lg:flex-1 lg:flex lg:flex-col ">
           <div className="flex items-center justify-center mb-2 px-4">
             <div className="h-14 bg-white w-full max-w-4xl mt-2 rounded-3xl shadow-lg flex items-center justify-between px-6">
               <Skeleton width={120} height={20} baseColor="#1f2937" highlightColor="#4b5563" />
@@ -148,8 +152,8 @@ function HomePage() {
           </div>
         </div>
 
-        {/* Skeleton Thread Pane (right) */}
-        <div className="w-[320px] min-w-[300px] h-full border-l border-gray-200 bg-white">
+        {/* Skeleton Thread Pane */}
+        <div className="hidden lg:w-[320px] lg:min-w-[300px] h-full border-l border-gray-200 bg-white">
           <div className="p-4 border-b border-gray-200 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Skeleton circle width={40} height={40} baseColor="#1f2937" highlightColor="#4b5563" />
@@ -192,10 +196,9 @@ function HomePage() {
     );
   }
 
-  // Real content (your original code – unchanged)
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-offwhite">
-      {/* Aside / Sidebar */}
+      {/* Aside */}
       <div
         className={`
           ${isMobile
@@ -208,7 +211,7 @@ function HomePage() {
         <Aside onSelectChat={handleSelectChat} />
       </div>
 
-      {/* Main chat area */}
+      {/* Main */}
       <div
         className={`
           flex-1 flex flex-col min-w-0 h-full
@@ -223,10 +226,11 @@ function HomePage() {
           isThreadOpen={isThreadOpen}
           toggleThreadPane={toggleThreadPane}
           onBack={isMobile ? goBackToAside : undefined}
+          selectedChat={selectedChat}
         />
       </div>
 
-      {/* Thread Pane / Info panel */}
+      {/* Thread Pane */}
       <div
         className={`
           ${isMobile
