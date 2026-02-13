@@ -10,6 +10,7 @@ import MessageList from './MessageList';
 import MessageInput from './MessageInput';
 import SettingsModal from '../../pages/Settings';
 import { useWebSocket } from '../../context/ws';
+import ForwardModal from './ForwardModal';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -30,13 +31,21 @@ interface Message {
   hasAudio?: boolean;
   duration?: string;
   type?: 'system' | 'user';
+  replyTo?: string;
+  replyToText?: string;
+  replyToSender?: string;
+  reactions?: Array<{ emoji: string; count: number }>;
+  status?: 'sent' | 'delivered' | 'read';
 }
 
 const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProps) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const { socket } = useWebSocket();
+  const [replyTarget, setReplyTarget] = useState<Message | null>(null);
+  const [forwardSource, setForwardSource] = useState<Message | null>(null);
+  const { socket, onlineUsers } = useWebSocket();
+  const [isPeerTyping, setIsPeerTyping] = useState(false);
 
   // Fetch messages
   useEffect(() => {
@@ -90,7 +99,28 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
       });
 
       const data = response.data?.messages || response.data || [];
-      setMessages(Array.isArray(data) ? data : []);
+      const raw = Array.isArray(data) ? data : [];
+      const idMap = new Map<string, any>(raw.map((m: any) => [String(m.id), m]));
+      const normalized = raw.map((m: any) => {
+        const rt =
+          m.replyTo ??
+          m.reply_to ??
+          m.reply_id ??
+          m.parentMessageId ??
+          m.parent_id;
+        if (rt) {
+          const ref = idMap.get(String(rt));
+          return {
+            ...m,
+            replyTo: String(rt),
+            replyToText: m.replyToText ?? ref?.text ?? m.reply_to_text ?? null,
+            replyToSender:
+              m.replyToSender ?? ref?.sender?.name ?? m.reply_to_sender ?? null,
+          };
+        }
+        return m;
+      });
+      setMessages(normalized);
 
     } catch (err: any) {
       console.error('DM init/fetch error:', err);
@@ -109,6 +139,23 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
   initAndFetchMessages();
 }, [selectedChat]);
 
+  useEffect(() => {
+    const onStartReply = (e: Event) => {
+      const ce = e as CustomEvent<{ message: Message }>;
+      setReplyTarget(ce.detail.message);
+    };
+    const onStartForward = (e: Event) => {
+      const ce = e as CustomEvent<{ message: Message }>;
+      setForwardSource(ce.detail.message);
+      // open modal here (to be implemented)
+    };
+    window.addEventListener('start-reply', onStartReply as EventListener);
+    window.addEventListener('start-forward', onStartForward as EventListener);
+    return () => {
+      window.removeEventListener('start-reply', onStartReply as EventListener);
+      window.removeEventListener('start-forward', onStartForward as EventListener);
+    };
+  }, []);
   useEffect(() => {
     const onMemberAdded = (e: Event) => {
       const ce = e as CustomEvent<{
@@ -130,10 +177,11 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
     };
     window.addEventListener('member-added', onMemberAdded as EventListener);
     return () => window.removeEventListener('member-added', onMemberAdded as EventListener);
-  }, [selectedChat?.id, selectedChat?.type]);
+  }, [selectedChat?.id, selectedChat?.type, selectedChat]);
 
   const handleMessageSent = (newMessage: Message) => {
     setMessages((prev) => [...prev, newMessage]);
+    setReplyTarget(null);
   };
 
   useEffect(() => {
@@ -147,6 +195,10 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
       if (!incoming) return;
       setMessages((prev) => [...prev, incoming]);
     };
+    const onTyping = (data: any) => {
+      if (data?.channelId !== channelId) return;
+      setIsPeerTyping(Boolean(data.isTyping));
+    };
     const onMessageEdited = (data: any) => {
       if (data?.channelId !== channelId) return;
       setMessages((prev) =>
@@ -157,18 +209,108 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
       if (data?.channelId !== channelId) return;
       setMessages((prev) => prev.filter((m) => m.id !== data.messageId));
     };
+    const onMessageDelivered = (data: any) => {
+      if (data?.channelId !== channelId) return;
+      const { messageId } = data;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, status: 'delivered' } : m))
+      );
+    };
+    const onMessageRead = (data: any) => {
+      if (data?.channelId !== channelId) return;
+      const { messageId } = data;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, status: 'read' } : m))
+      );
+    };
+
+    const onReactionUpdate = (data: any) => {
+      if (data?.channelId !== channelId) return;
+      const { messageId, emoji, action } = data;
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== messageId) return m;
+          const existing = m.reactions || [];
+          const idx = existing.findIndex((r) => r.emoji === emoji);
+          if (action === 'added') {
+            if (idx >= 0) {
+              const next = [...existing];
+              next[idx] = { emoji, count: next[idx].count + 1 };
+              return { ...m, reactions: next };
+            }
+            return { ...m, reactions: [...existing, { emoji, count: 1 }] };
+          } else {
+            if (idx >= 0) {
+              const next = [...existing];
+              const newCount = next[idx].count - 1;
+              if (newCount <= 0) {
+                next.splice(idx, 1);
+              } else {
+                next[idx] = { emoji, count: newCount };
+              }
+              return { ...m, reactions: next };
+            }
+            return m;
+          }
+        })
+      );
+    };
 
     socket.on('new_message', onNewMessage);
+    socket.on('typing', onTyping);
     socket.on('message_edited', onMessageEdited);
     socket.on('message_deleted', onMessageDeleted);
+    socket.on('reaction_update', onReactionUpdate);
+    socket.on('message_delivered', onMessageDelivered);
+    socket.on('message_read', onMessageRead);
 
     return () => {
       socket.emit('leave_channel', { channelId });
       socket.off('new_message', onNewMessage);
+      socket.off('typing', onTyping);
       socket.off('message_edited', onMessageEdited);
       socket.off('message_deleted', onMessageDeleted);
+        socket.off('reaction_update', onReactionUpdate);
+      socket.off('message_delivered', onMessageDelivered);
+      socket.off('message_read', onMessageRead);
     };
   }, [socket, selectedChat]);
+
+  useEffect(() => {
+    const onLocalReaction = (e: Event) => {
+      const ce = e as CustomEvent<{ messageId: string; emoji: string; action: 'added' | 'removed' }>;
+      const { messageId, emoji, action } = ce.detail;
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== messageId) return m;
+          const existing = m.reactions || [];
+          const idx = existing.findIndex((r) => r.emoji === emoji);
+          if (action === 'added') {
+            if (idx >= 0) {
+              const next = [...existing];
+              next[idx] = { emoji, count: next[idx].count + 1 };
+              return { ...m, reactions: next };
+            }
+            return { ...m, reactions: [...existing, { emoji, count: 1 }] };
+          } else {
+            if (idx >= 0) {
+              const next = [...existing];
+              const newCount = next[idx].count - 1;
+              if (newCount <= 0) {
+                next.splice(idx, 1);
+              } else {
+                next[idx] = { emoji, count: newCount };
+              }
+              return { ...m, reactions: next };
+            }
+            return m;
+          }
+        })
+      );
+    };
+    window.addEventListener('reaction-update', onLocalReaction as EventListener);
+    return () => window.removeEventListener('reaction-update', onLocalReaction as EventListener);
+  }, []);
 
   return (
     <div className="h-screen flex-1 flex flex-col bg-offwhite font-poppins">
@@ -178,6 +320,7 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
         toggleThreadPane={toggleThreadPane}
         onBack={onBack}
         onSettingsOpen={() => setIsSettingsOpen(true)}
+        isOnline={selectedChat?.type === 'dm' ? onlineUsers.includes(String(selectedChat.id)) : undefined}
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -189,17 +332,28 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
               messages={messages}
               isLoading={isLoadingMessages}
               selectedChat={selectedChat}
+              isTyping={isPeerTyping}
             />
-
-            <MessageInput selectedChat={selectedChat} onMessageSent={handleMessageSent} />
+            <MessageInput
+              selectedChat={selectedChat}
+              onMessageSent={handleMessageSent}
+              replyTarget={replyTarget}
+              onCancelReply={() => setReplyTarget(null)}
+            />
+            {/* <MessageInput selectedChat={selectedChat} onMessageSent={handleMessageSent} /> */}
           </>
         )}
-      </div>
 
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
       />
+      <ForwardModal
+        isOpen={Boolean(forwardSource)}
+        onClose={() => setForwardSource(null)}
+        sourceMessage={forwardSource ? { id: forwardSource.id, text: forwardSource.text } : null}
+      />
+    </div>
     </div>
   );
 };

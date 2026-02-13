@@ -11,9 +11,10 @@ interface MessageListProps {
   messages?: any[] | null;          // Allow undefined / null
   isLoading: boolean;
   selectedChat: any;
+  isTyping?: boolean;
 }
 
-const MessageList = ({ messages = [], isLoading, selectedChat }: MessageListProps) => {
+const MessageList = ({ messages = [], isLoading, selectedChat, isTyping }: MessageListProps) => {
   // messages is now guaranteed to be [] even if parent passes undefined/null
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -92,9 +93,12 @@ const MessageList = ({ messages = [], isLoading, selectedChat }: MessageListProp
   let currentKey: string | null = null;
 
   const sortedMessages = [...messages].sort((a, b) => {
-    const aDate = new Date(a.time);
-    const bDate = new Date(b.time);
-    return aDate.getTime() - bDate.getTime();
+    const aTime = new Date(a.time).getTime();
+    const bTime = new Date(b.time).getTime();
+    if (aTime !== bTime) return aTime - bTime;
+    const aId = String(a.id);
+    const bId = String(b.id);
+    return aId.localeCompare(bId);
   });
 
   sortedMessages.forEach((msg) => {
@@ -152,23 +156,36 @@ const MessageList = ({ messages = [], isLoading, selectedChat }: MessageListProp
                 </span>
               </div>
             ) : (
-              <MessageBubble
-                key={msg.id}
-                message={msg}
-                showSenderName={selectedChat?.type === 'channel'}
-                onDelete={(msgId) => {
-                  // This callback is defined in parent — safe
-                }}
-                onEdit={(msgId, newText) => {
-                  // This callback is defined in parent — safe
-                }}
-                onReply={(msg) => console.log('Reply to:', msg)}
-                onForward={(msg) => console.log('Forward:', msg)}
-              />
+              <div id={`msg-${msg.id}`} key={msg.id}>
+                <MessageBubble
+                  message={msg}
+                  showSenderName={selectedChat?.type === 'channel'}
+                  channelId={selectedChat?.type === 'channel' ? selectedChat.id : undefined}
+                  onDelete={(msgId) => {}}
+                  onEdit={(msgId, newText) => {}}
+                  onReply={(message) => {
+                    const ev = new CustomEvent('start-reply', { detail: { message } });
+                    window.dispatchEvent(ev);
+                  }}
+                  onForward={(message) => {
+                    const ev = new CustomEvent('start-forward', { detail: { message } });
+                    window.dispatchEvent(ev);
+                  }}
+                  onScrollToMessage={(targetId) => {
+                    const el = containerRef.current?.querySelector(`#msg-${targetId}`) as HTMLElement | null;
+                    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }}
+                />
+              </div>
             )
           )}
         </div>
       ))}
+      {isTyping && (
+        <div className="flex justify-start px-2">
+          <span className="text-xs text-text-secondary italic">Typing...</span>
+        </div>
+      )}
       <div ref={bottomRef} />
     </div>
   );

@@ -20,9 +20,15 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 interface MessageInputProps {
   selectedChat: { id: string; type: 'channel' | 'dm'; name?: string } | null;
   onMessageSent?: (newMessage: any) => void; // callback to add message to list
+  replyTarget?: {
+    id: string;
+    text: string;
+    sender: { id: string; name: string };
+  } | null;
+  onCancelReply?: () => void;
 }
 
-const MessageInput = ({ selectedChat, onMessageSent }: MessageInputProps) => {
+const MessageInput = ({ selectedChat, onMessageSent, replyTarget, onCancelReply }: MessageInputProps) => {
   const [message, setMessage] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
@@ -70,12 +76,18 @@ const MessageInput = ({ selectedChat, onMessageSent }: MessageInputProps) => {
       text: message,
       time: new Date().toISOString(),
       isOwn: true,
+      ...(replyTarget && {
+        replyTo: replyTarget.id,
+        replyToText: replyTarget.text,
+        replyToSender: replyTarget.sender.name,
+      }),
     };
 
     // Optimistic UI: show message immediately
     onMessageSent?.(optimisticMessage);
     setMessage('');
     setIsSending(true);
+    if (onCancelReply) onCancelReply();
 
     try {
       const token = localStorage.getItem('token');
@@ -90,7 +102,7 @@ const MessageInput = ({ selectedChat, onMessageSent }: MessageInputProps) => {
 
       const res = await axios.post(
         `${API_BASE_URL}${endpoint}`,
-        { text: message }, // adjust payload as per your backend
+        { text: message, replyTo: replyTarget?.id }, // adjust payload as per your backend
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const newMessage = res.data?.message || res.data;
@@ -111,6 +123,22 @@ const MessageInput = ({ selectedChat, onMessageSent }: MessageInputProps) => {
 
   return (
     <div className="border-t border-border bg-gray-300 px-1 py-2 relative flex flex-col items-center justify-center">
+      {replyTarget && (
+        <div className="w-full px-3 mb-2">
+          <div className="bg-white rounded-xl border border-border px-3 py-2 flex items-start justify-between">
+            <div className="text-sm">
+              <div className="font-semibold">{replyTarget.sender.name}</div>
+              <div className="text-gray-600 truncate max-w-[70vw]">{replyTarget.text}</div>
+            </div>
+            <button
+              onClick={onCancelReply}
+              className="text-xs text-gray-500 hover:text-gray-700 cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       <div className="h-12 flex items-center justify-between md:gap-2 bg-offwhite rounded-3xl px-1 lg:px-3 py-1 focus-within:ring-2 focus-within:ring-blue/30 w-full">
         <button
           className="p-1.5 hover:bg-white/50 rounded cursor-pointer flex items-start"
@@ -170,7 +198,7 @@ const MessageInput = ({ selectedChat, onMessageSent }: MessageInputProps) => {
           value={message}
           onChange={(e) => {
             setMessage(e.target.value);
-            if (selectedChat?.type === 'channel' && socket) {
+            if (selectedChat && socket) {
               socket.emit('typing', { channelId: selectedChat.id, isTyping: true });
               if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
               typingTimerRef.current = setTimeout(() => {

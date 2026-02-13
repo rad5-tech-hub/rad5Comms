@@ -7,6 +7,7 @@ interface ChatHeaderProps {
   toggleThreadPane: () => void;
   onBack?: () => void;
   onSettingsOpen: () => void;
+  isOnline?: boolean;
 }
 
 const ChatHeader = ({
@@ -15,6 +16,7 @@ const ChatHeader = ({
   toggleThreadPane,
   onBack,
   onSettingsOpen,
+  isOnline,
 }: ChatHeaderProps) => {
   return (
     <div className="flex items-center justify-center mb-2 px-4">
@@ -29,8 +31,15 @@ const ChatHeader = ({
           className="flex items-center lg:gap-3 cursor-pointer"
           onClick={toggleThreadPane}
         >
-          <h2 className="font-semibold text-text-primary">
+          <h2 className="font-semibold text-text-primary flex items-center gap-2">
             {selectedChat?.name || 'Rad5 Comms'}
+            {typeof isOnline !== 'undefined' && (
+              <span
+                className={`inline-block w-2 h-2 rounded-full ${
+                  isOnline ? 'bg-blue' : 'bg-transparent'
+                }`}
+              />
+            )}
           </h2>
           <ChevronDown
             className={`w-4 h-4 text-text-secondary transition-transform duration-200 ${

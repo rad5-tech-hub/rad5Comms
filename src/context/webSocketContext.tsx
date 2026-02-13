@@ -44,6 +44,8 @@ export const WebSocketProvider = ({ children }: WebSocketProviderProps) => {
       setIsConnected(false);
       if (reason === 'io server disconnect') {
         toast.error('Disconnected from chat. Please log in again.');
+      } else if (reason === 'transport close' || reason === 'ping timeout') {
+        toast.warning('Network issue detected. Please check your connection.');
       }
     });
 
