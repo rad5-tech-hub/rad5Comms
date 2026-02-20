@@ -186,7 +186,7 @@ function HomePage() {
             ? `${mobileViewClass} ${
                 activeView === 'aside' ? 'translate-x-0' : '-translate-x-full'
               } z-30`
-            : 'w-[280px] min-w-[260px] h-full border-r border-border shrink-0'}
+            : 'w-70 min-w-65 h-full border-r border-border shrink-0'}
         `}
       >
         <Aside onSelectChat={handleSelectChat} />

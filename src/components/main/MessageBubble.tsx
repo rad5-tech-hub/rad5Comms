@@ -33,6 +33,7 @@ interface MessageBubbleProps {
     replyToText?: string;
     replyToSender?: string;
     reactions?: Array<{ emoji: string; count: number }>;
+    status?: 'sent' | 'delivered' | 'read';
   };
   onDelete?: (messageId: string) => void; // callback to remove from list
   onEdit?: (messageId: string, newText: string) => void; // callback to update list

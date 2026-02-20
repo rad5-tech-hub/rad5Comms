@@ -23,6 +23,7 @@ interface ThreadPaneProps {
       role?: string;
     }>;
     isAdmin?: boolean;         // whether current user is admin in this channel
+    media?: Array<{ url: string; type: string }>;      // define a simple Media type inline or replace with your actual Media type
   } | null;
 }
 
@@ -37,7 +38,7 @@ const ThreadPane = ({
   // If no chat selected → show placeholder
   if (!selectedChat) {
     return (
-      <div className="h-screen lg:w-[320px] min-w-[300px] bg-sidebar border-l border-border flex flex-col items-center justify-center text-center text-gray-400">
+      <div className="h-screen lg:w-[320px] min-w-75 bg-sidebar border-l border-border flex flex-col items-center justify-center text-center text-gray-400">
         <p className="text-lg font-medium">No chat selected</p>
         <p className="text-sm mt-2">Select a conversation to view details</p>
       </div>
@@ -52,7 +53,7 @@ const ThreadPane = ({
   };
 
   return (
-    <div className="h-screen lg:w-[320px] min-w-[300px] bg-sidebar border-l border-border overflow-y-auto flex flex-col font-poppins">
+    <div className="h-screen lg:w-[320px] min-w-75 bg-sidebar border-l border-border overflow-y-auto flex flex-col font-poppins">
       {/* Header with back button */}
       <div className="p-1 border-b border-border flex items-center sticky top-0 bg-sidebar z-10 lg:hidden">
         {onBack && (
@@ -73,7 +74,7 @@ const ThreadPane = ({
         />
 
         {/* Media */}
-        <MediaSection media={selectedChat?.media || []} />
+        <MediaSection media={(selectedChat?.media || []).map(m => m.url)} />
 
         {/* Members - only for groups/channels */}
         {isGroup && (

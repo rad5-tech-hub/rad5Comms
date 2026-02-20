@@ -243,7 +243,7 @@ const Aside = ({ onSelectChat }: AsideProps) => {
   };
 
   return (
-    <div className="font-poppins h-screen sm:w-auto lg:w-[280px] min-w-[260px] bg-sidebar text-sidebar-text flex flex-col">
+    <div className="font-poppins h-screen sm:w-auto lg:w-70 min-w-65 bg-sidebar text-sidebar-text flex flex-col">
       <AsideHeader
         isLoading={isLoading}
         channels={channels}
