@@ -180,19 +180,25 @@ const Aside = ({ onSelectChat }: AsideProps) => {
 
   // Filter logic
   const filteredChannels = channels.filter((ch) => {
-    if (activeTab === 'all') return true;
-    if (activeTab === 'archived') return ch.isArchived;
-    if (activeTab === 'starred') return ch.isStarred;
-    return true;
+    if (activeTab === 'archived') {
+      return ch.isArchived;
+    }
+    if (activeTab === 'starred') {
+      return ch.isStarred && !ch.isArchived;
+    }
+    return !ch.isArchived; // 'all' tab shows non-archived
   });
 
   const filteredUsers = users
     .filter((u) => u.id !== currentUserId) // No self-DM
     .filter((u) => {
-      if (activeTab === 'all') return true;
-      if (activeTab === 'archived') return u.isArchived;
-      if (activeTab === 'starred') return u.isStarred;
-      return true;
+      if (activeTab === 'archived') {
+        return u.isArchived;
+      }
+      if (activeTab === 'starred') {
+        return u.isStarred && !u.isArchived;
+      }
+      return !u.isArchived; // 'all' tab shows non-archived
     });
 
   // Callback for optimistic updates after action

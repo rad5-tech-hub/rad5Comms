@@ -34,23 +34,35 @@ const CreateChannelModal = ({ isOpen, onClose }: CreateChannelModalProps) => {
   // ── NEW: Current user state ──
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-  // Fetch current user ID when modal opens
+  // Fetch current user and set them as the first member
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      // Reset state when modal closes
+      setName('');
+      setDescription('');
+      setSearchTerm('');
+      setSearchResults([]);
+      setSelectedMembers([]);
+      setCurrentUserId(null);
+      return;
+    }
 
     const fetchCurrentUser = async () => {
       try {
         const token = localStorage.getItem('token');
         if (!token) throw new Error('No token');
 
-        const res = await axios.get(`${API_BASE_URL}/users/me`, {  // or /auth/me
+        const res = await axios.get(`${API_BASE_URL}/users/me`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 
-        const userId = res.data?.id || res.data?.user?.id;
-        if (!userId) throw new Error('No user ID returned');
+        const user = res.data?.user || res.data;
+        if (!user || !user.id) throw new Error('No user ID returned');
 
-        setCurrentUserId(userId);
+        setCurrentUserId(user.id);
+        // Set the creator as the first and only member initially
+        setSelectedMembers([{ id: user.id, name: 'You (Creator)', avatar: user.avatar }]);
+
       } catch (err) {
         console.error('Failed to fetch current user:', err);
         toast.error('Could not verify your identity. Please log in again.');
@@ -59,22 +71,15 @@ const CreateChannelModal = ({ isOpen, onClose }: CreateChannelModalProps) => {
     };
 
     fetchCurrentUser();
-
-    // Cleanup: reset when modal closes
-    return () => {
-      setCurrentUserId(null);
-    };
   }, [isOpen, onClose]);
 
-  // ── Debounced search (updated to exclude current user) ──
+  // Debounced search for users to add
   useEffect(() => {
-    if (!searchTerm.trim() || !currentUserId) {
+    if (!searchTerm.trim()) {
       setSearchResults([]);
       setIsSearching(false);
       return;
     }
-
-    setSelectedMembers([{ id: currentUserId, name: 'You (Creator)' }]);
 
     const timer = setTimeout(async () => {
       setIsSearching(true);
@@ -87,12 +92,9 @@ const CreateChannelModal = ({ isOpen, onClose }: CreateChannelModalProps) => {
 
         const users: UserSearchResult[] = res.data?.users || res.data || [];
 
-        const lowerTerm = searchTerm.toLowerCase();
+        // Filter out the current user and already selected members
         const filtered = users.filter(
-          (u) =>
-            u.name.toLowerCase().includes(lowerTerm) &&
-            u.id !== currentUserId &&                          // ← Prevent self
-            !selectedMembers.some((m) => m.id === u.id)       // ← Prevent duplicates
+          (user) => !selectedMembers.some((m) => m.id === user.id)
         );
 
         setSearchResults(filtered.slice(0, 10));
@@ -105,7 +107,7 @@ const CreateChannelModal = ({ isOpen, onClose }: CreateChannelModalProps) => {
     }, 400);
 
     return () => clearTimeout(timer);
-  }, [searchTerm, currentUserId, selectedMembers]);
+  }, [searchTerm, selectedMembers]);
 
   const handleAddMember = (user: UserSearchResult) => {
     if (user.id === currentUserId) {
@@ -276,13 +278,15 @@ const CreateChannelModal = ({ isOpen, onClose }: CreateChannelModalProps) => {
                       </div>
                     )}
                     <span className="font-medium">{member.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveMember(member.id)}
-                      className="ml-1 text-blue-600 hover:text-blue-800"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                    {member.id !== currentUserId && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveMember(member.id)}
+                        className="ml-1 text-blue-600 hover:text-blue-800"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

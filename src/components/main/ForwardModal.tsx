@@ -90,7 +90,7 @@ const ForwardModal = ({ isOpen, onClose, sourceMessage }: ForwardModalProps) => 
         const endpoint =
           target.type === 'channel'
             ? `/channels/${target.id}/messages`
-            : `/channels/personal/${target.id}/messages`;
+            : `/dms/${target.id}/messages`;
         const res = await axios.post(
           `${API_BASE_URL}${endpoint}`,
           { text: sourceMessage.text },

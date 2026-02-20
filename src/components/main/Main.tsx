@@ -49,94 +49,94 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
 
   // Fetch messages
   useEffect(() => {
-  if (!selectedChat) {
-    setMessages([]);
-    setIsLoadingMessages(false);
-    return;
-  }
-
-  const initAndFetchMessages = async () => {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      toast.error('Please log in');
+    if (!selectedChat) {
+      setMessages([]);
+      setIsLoadingMessages(false);
       return;
     }
 
-    setIsLoadingMessages(true);
+    const initAndFetchMessages = async () => {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        toast.error('Please log in');
+        return;
+      }
 
-    try {
-      let chatId = selectedChat.id;
-      let endpointBase = '';
+      setIsLoadingMessages(true);
 
-      if (selectedChat.type === 'channel') {
-        endpointBase = `/channels/${chatId}`;
-      } else {
-        // DM: ensure personal chat exists
-        try {
-          // Step 1: Try to create/init personal chat (idempotent or returns existing)
-          const createRes = await axios.post(
-            `${API_BASE_URL}/channels/personal/${selectedChat.id}`,
-            {}, // empty body or { name: selectedChat.name } if needed
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
+      try {
+        let chatId = selectedChat.id;
+        let endpointBase = '';
 
-          // If backend returns the chat object with ID (or just 201)
-          chatId = createRes.data?.id || selectedChat.id;
-          endpointBase = `/channels/personal/${chatId}`;
-        } catch (createErr: any) {
-          if (createErr.response?.status !== 409 && createErr.response?.status !== 400) {
-            // 409 = already exists (common), ignore
-            throw createErr;
+        if (selectedChat.type === 'channel') {
+          endpointBase = `/channels/${chatId}`;
+        } else {
+          // DM: ensure personal chat exists
+          try {
+            // Step 1: Try to create/init personal chat (idempotent or returns existing)
+            const createRes = await axios.post(
+              `${API_BASE_URL}/dms/${selectedChat.id}`,
+              {}, // empty body or { name: selectedChat.name } if needed
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+
+            // If backend returns the chat object with ID (or just 201)
+            chatId = createRes.data?.id || selectedChat.id;
+            endpointBase = `/dms/${chatId}`;
+          } catch (createErr: any) {
+            if (createErr.response?.status !== 409 && createErr.response?.status !== 400) {
+              // 409 = already exists (common), ignore
+              throw createErr;
+            }
+            // Already exists → proceed with original ID
+            endpointBase = `/dms/${selectedChat.id}`;
           }
-          // Already exists → proceed with original ID
-          endpointBase = `/channels/personal/${selectedChat.id}`;
         }
-      }
 
-      // Step 2: Fetch messages
-      const response = await axios.get(`${API_BASE_URL}${endpointBase}/messages`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+        // Step 2: Fetch messages
+        const response = await axios.get(`${API_BASE_URL}${endpointBase}/messages`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
 
-      const data = response.data?.messages || response.data || [];
-      const raw = Array.isArray(data) ? data : [];
-      const idMap = new Map<string, any>(raw.map((m: any) => [String(m.id), m]));
-      const normalized = raw.map((m: any) => {
-        const rt =
-          m.replyTo ??
-          m.reply_to ??
-          m.reply_id ??
-          m.parentMessageId ??
-          m.parent_id;
-        if (rt) {
-          const ref = idMap.get(String(rt));
-          return {
-            ...m,
-            replyTo: String(rt),
-            replyToText: m.replyToText ?? ref?.text ?? m.reply_to_text ?? null,
-            replyToSender:
-              m.replyToSender ?? ref?.sender?.name ?? m.reply_to_sender ?? null,
-          };
+        const data = response.data?.messages || response.data || [];
+        const raw = Array.isArray(data) ? data : [];
+        const idMap = new Map<string, any>(raw.map((m: any) => [String(m.id), m]));
+        const normalized = raw.map((m: any) => {
+          const rt =
+            m.replyTo ??
+            m.reply_to ??
+            m.reply_id ??
+            m.parentMessageId ??
+            m.parent_id;
+          if (rt) {
+            const ref = idMap.get(String(rt));
+            return {
+              ...m,
+              replyTo: String(rt),
+              replyToText: m.replyToText ?? ref?.text ?? m.reply_to_text ?? null,
+              replyToSender:
+                m.replyToSender ?? ref?.sender?.name ?? m.reply_to_sender ?? null,
+            };
+          }
+          return m;
+        });
+        setMessages(normalized);
+
+      } catch (err: any) {
+        console.error('DM init/fetch error:', err);
+        const msg = err.response?.data?.error || 'Failed to load or initialize chat';
+        toast.error(msg);
+
+        if (err.response?.status === 404) {
+          // If backend still says not found after create attempt
+          setMessages([]);
         }
-        return m;
-      });
-      setMessages(normalized);
-
-    } catch (err: any) {
-      console.error('DM init/fetch error:', err);
-      const msg = err.response?.data?.error || 'Failed to load or initialize chat';
-      toast.error(msg);
-
-      if (err.response?.status === 404) {
-        // If backend still says not found after create attempt
-        setMessages([]);
+      } finally {
+        setIsLoadingMessages(false);
       }
-    } finally {
-      setIsLoadingMessages(false);
-    }
-  };
+    };
 
-  initAndFetchMessages();
+    initAndFetchMessages();
 }, [selectedChat]);
 
   useEffect(() => {

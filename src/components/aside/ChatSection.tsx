@@ -12,6 +12,7 @@ interface ChatSectionProps {
   onPlusClick?: () => void;
   emptyMessage: string;
   activeTab: 'all' | 'archived' | 'starred';
+  onActionSuccess?: (updatedItem: any) => void;
   selectedChatId?: string;
 }
 
@@ -21,9 +22,10 @@ const ChatSection = ({
   items,
   type,
   onSelectChat,
-  activeTab,
   onPlusClick,
   emptyMessage,
+  activeTab,
+  onActionSuccess,
   selectedChatId
 }: ChatSectionProps) => {
   return (
@@ -52,8 +54,9 @@ const ChatSection = ({
               item={item}
               type={type}
               onSelectChat={onSelectChat}
-              activeTab={activeTab} // pass activeTab if filtering inside ChatItem
-              selectedChatId={selectedChatId}   // ← pass down
+              activeTab={activeTab}
+              onActionSuccess={onActionSuccess}
+              selectedChatId={selectedChatId}
             />
           ))
         )}

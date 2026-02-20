@@ -29,6 +29,7 @@ interface ThreadPaneProps {
 const ThreadPane = ({
   isOpen,
   onBack,
+  onToggle,
   selectedChat,
 }: ThreadPaneProps) => {
   if (!isOpen) return null;
@@ -44,6 +45,11 @@ const ThreadPane = ({
   }
 
   const isGroup = selectedChat.type === 'channel';
+
+  const handleActionSuccess = () => {
+    onToggle?.(); 
+    window.dispatchEvent(new CustomEvent('chat-action-success', { detail: { chatId: selectedChat.id } }));
+  };
 
   return (
     <div className="h-screen lg:w-[320px] min-w-[300px] bg-sidebar border-l border-border overflow-y-auto flex flex-col font-poppins">
@@ -79,7 +85,7 @@ const ThreadPane = ({
         )}
 
         {/* Actions */}
-        <ActionsSection isGroup={isGroup} />
+        <ActionsSection isGroup={isGroup} chatId={selectedChat.id} onActionSuccess={handleActionSuccess}/>
       </div>
     </div>
   );

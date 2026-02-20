@@ -97,7 +97,7 @@ const MessageInput = ({ selectedChat, onMessageSent, replyTarget, onCancelReply 
       if (selectedChat.type === 'channel') {
         endpoint = `/channels/${selectedChat.id}/messages`;
       } else {
-        endpoint = `/channels/personal/${selectedChat.id}/messages`; // DM endpoint
+        endpoint = `/dms/${selectedChat.id}/messages`; // DM endpoint
       }
 
       const res = await axios.post(

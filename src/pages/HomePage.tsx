@@ -18,7 +18,7 @@ function HomePage() {
   const [selectedChat, setSelectedChat] = useState<{
     id: string;
     type: 'channel' | 'dm';
-    name?: string;
+    name: string;
     description?: string;
     avatar?: string;
     memberCount?: number;
@@ -49,6 +49,15 @@ function HomePage() {
     return () => clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    const handleChatAction = () => {
+      setSelectedChat(null);
+      // You might want to refetch your chat lists here as well
+    };
+    window.addEventListener('chat-action-success', handleChatAction);
+    return () => window.removeEventListener('chat-action-success', handleChatAction);
+  }, []);
+
   const toggleThreadPane = () => {
     setIsThreadOpen((prev) => {
       const next = !prev;
@@ -71,7 +80,14 @@ function HomePage() {
     }
   ) => {
     const token = localStorage.getItem('token');
-    let fullData = { ...extra };
+    let fullData: {
+      avatar?: string;
+      description?: string;
+      bio?: string;
+      memberCount?: number;
+      members?: Array<{ id: string; name: string; avatar?: string }>;
+      isAdmin?: boolean;
+    } = { ...extra };
 
     if (token) {
       try {
@@ -107,7 +123,7 @@ function HomePage() {
     setSelectedChat({
       id: chatId,
       type,
-      name: name || 'Chat',
+      name: name || 'Unnamed Chat',
       ...fullData,
     });
 
@@ -203,7 +219,7 @@ function HomePage() {
                 activeView === 'thread' ? 'translate-x-0' : 'translate-x-full'
               } z-40 bg-white`
             : `h-full border-l border-border transition-all duration-300 ease-in-out ${
-                isThreadOpen ? 'w-[320px] min-w-[300px]' : 'w-0 overflow-hidden'
+                isThreadOpen ? 'w-[320px] min-w-75' : 'w-0 overflow-hidden'
               }`}
         `}
       >

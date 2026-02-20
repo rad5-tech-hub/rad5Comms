@@ -1,10 +1,32 @@
 // src/context/WebSocketContext.tsx
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { io } from 'socket.io-client';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { io, Socket } from 'socket.io-client';
 import { toast } from 'sonner';
-import { WebSocketContext } from './ws';
 
-const API_BASE_URL = import.meta.env.VITE_API_WEBHOOK_URL || 'http://localhost:3000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+
+interface Message {
+  // Define your message type according to your data structure
+  id: string;
+  sender: { id: string; name: string; avatar?: string };
+  text: string;
+  time: string;
+  isOwn: boolean;
+  status?: 'sent' | 'delivered' | 'read';
+  tempId?: string;
+}
+
+interface WebSocketContextType {
+  socket: Socket | null;
+  isConnected: boolean;
+  onlineUsers: string[];
+}
+
+export const WebSocketContext = createContext<WebSocketContextType>({
+  socket: null,
+  isConnected: false,
+  onlineUsers: [],
+});
 
 interface WebSocketProviderProps {
   children: ReactNode;
@@ -18,7 +40,7 @@ export const WebSocketProvider = ({ children }: WebSocketProviderProps) => {
 
   const socket = useMemo(() => {
     if (!token) return null;
-    return io(  API_BASE_URL, {
+    return io(API_BASE_URL, {
       path: '/ws',
       query: { token },
       reconnection: true,
@@ -49,42 +71,46 @@ export const WebSocketProvider = ({ children }: WebSocketProviderProps) => {
       }
     });
 
-    socket.on('connect_error', (err) => {
-      console.error('WebSocket connection error:', err.message);
-      if (err.message.includes('401') || err.message.includes('403')) {
-        toast.error('Authentication failed. Logging out...');
-        localStorage.removeItem('token');
-        window.location.href = '/';
-      }
+    socket.on('online_users', (users: string[]) => {
+      setOnlineUsers(users);
     });
 
-    socket.on('error', (err) => {
-      console.error('Socket error:', err);
-      toast.error(err.message || 'Chat error occurred');
+    // Centralized event listeners for message status
+    socket.on('messageSent', (message: Message) => {
+      window.dispatchEvent(new CustomEvent('message-status-update', { detail: { messageId: message.id, status: 'sent', tempId: message.tempId } }));
+    });
+    
+    socket.on('messageDelivered', (data: { messageId: string, recipientId: string }) => {
+        window.dispatchEvent(new CustomEvent('message-status-update', { detail: { messageId: data.messageId, status: 'delivered' } }));
+    });
+    
+    socket.on('messageRead', (data: { messageId: string, readerId: string }) => {
+        window.dispatchEvent(new CustomEvent('message-status-update', { detail: { messageId: data.messageId, status: 'read' } }));
     });
 
-    socket.on('user_presence', (data: { userId: string; status: string }) => {
-      setOnlineUsers((prev) => {
-        const set = new Set(prev);
-        if (data.status === 'online') {
-          set.add(data.userId);
-        } else {
-          set.delete(data.userId);
-        }
-        return Array.from(set);
-      });
-    });
 
     return () => {
+      socket.off('connect');
+      socket.off('disconnect');
+      socket.off('online_users');
+      socket.off('messageSent');
+      socket.off('messageDelivered');
+      socket.off('messageRead');
       socket.disconnect();
-      setIsConnected(false);
-      setOnlineUsers([]);
     };
   }, [socket]);
 
+  const contextValue = useMemo(() => ({
+    socket,
+    isConnected,
+    onlineUsers,
+  }), [socket, isConnected, onlineUsers]);
+
   return (
-    <WebSocketContext.Provider value={{ socket, isConnected, onlineUsers }}>
+    <WebSocketContext.Provider value={contextValue}>
       {children}
     </WebSocketContext.Provider>
   );
 };
+
+export const useWebSocket = () => useContext(WebSocketContext);

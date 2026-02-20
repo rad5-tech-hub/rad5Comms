@@ -1,7 +1,7 @@
 // components/aside/ChatItem.tsx
 import { useState, useEffect, useRef } from 'react';
-import { MoreVertical, Hash, Archive, Star, Moon, CheckCircle } from 'lucide-react';
-import axios from 'axios';
+import { MoreVertical, Hash, Archive, Star, Bell, BellOff, CheckCircle } from 'lucide-react';
+import axios, { AxiosError } from 'axios';
 import { toast } from 'sonner';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -14,15 +14,17 @@ interface ChatItemProps {
     unread?: number;
     isArchived?: boolean;
     isStarred?: boolean;
+    isMuted?: boolean; // Add isMuted state
     // ... other fields
   };
   type: 'channel' | 'dm';
   onSelectChat?: (chatId: string, type: 'channel' | 'dm', name?: string) => void;
   activeTab: 'all' | 'archived' | 'starred';
   selectedChatId?: string;
+  onActionSuccess?: (updatedItem: any) => void;
 }
 
-const ChatItem = ({ item, type, onSelectChat, activeTab, selectedChatId }: ChatItemProps) => {
+const ChatItem = ({ item, type, onSelectChat, activeTab, selectedChatId, onActionSuccess }: ChatItemProps) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -48,39 +50,52 @@ const ChatItem = ({ item, type, onSelectChat, activeTab, selectedChatId }: ChatI
       const token = localStorage.getItem('token');
       if (!token) throw new Error('No token');
 
-      let baseEndpoint = '';
+      let url = '';
+      const actionPath = action === 'markRead' ? 'read' : action;
+
       if (type === 'channel') {
-        baseEndpoint = `/channels/${item.id}`;
+        url = `${API_BASE_URL}/channels/${item.id}/${actionPath}`;
       } else {
-        baseEndpoint = `/channels/personal/${item.id}`;
+        // For DMs, item.id is the recipientId
+        url = `${API_BASE_URL}/dms/${item.id}/${actionPath}`;
       }
 
-      const actionPath = action === 'markRead' ? '/read' : `/${action}`;
-
-      await axios.post(`${API_BASE_URL}${baseEndpoint}${actionPath}`, {}, {
+      const res = await axios.post(url, {}, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      
+      const responseData = res.data;
+      const updatedItem = {
+        ...item,
+        ...(responseData.isStarred !== undefined && { isStarred: responseData.isStarred }),
+        ...(responseData.isArchived !== undefined && { isArchived: responseData.isArchived }),
+        ...(responseData.isMuted !== undefined && { isMuted: responseData.isMuted }),
+      };
+      
+      onActionSuccess?.(updatedItem);
 
-      const actionText = {
+      const actionTextMap = {
         markRead: 'marked as read',
-        archive: 'archived',
-        star: 'starred',
-        mute: 'muted',
-      }[action];
+        archive: updatedItem.isArchived ? 'archived' : 'unarchived',
+        star: updatedItem.isStarred ? 'starred' : 'unstarred',
+        mute: updatedItem.isMuted ? 'muted' : 'unmuted',
+      };
 
-      toast.success(`${item.name} ${actionText}`);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || `Failed to ${action} ${item.name}`);
+      toast.success(`${item.name} ${actionTextMap[action]}`);
+
+    } catch (err: unknown) {
+      const error = err as AxiosError<{ error: string }>;
+      toast.error(error.response?.data?.error || `Failed to ${action} ${item.name}`);
     }
 
     setIsMenuOpen(false);
   };
 
-  // Tab visibility filter
+  // This is now handled in Aside.tsx, but we'll keep it to prevent any flicker
+  // while state updates, though the logic in Aside should be the source of truth.
   if (
     (activeTab === 'archived' && !item.isArchived) ||
-    (activeTab === 'starred' && !item.isStarred)
+    (activeTab === 'all' && item.isArchived)
   ) {
     return null;
   }
@@ -106,6 +121,8 @@ const ChatItem = ({ item, type, onSelectChat, activeTab, selectedChatId }: ChatI
         )}
 
         <span className="flex-1 truncate">{item.name}</span>
+
+        {item.isStarred && <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400" />}
 
         {/* Only show badge if unread > 0 */}
         {typeof item.unread === 'number' && item.unread > 0 && (
@@ -139,7 +156,7 @@ const ChatItem = ({ item, type, onSelectChat, activeTab, selectedChatId }: ChatI
             className="w-full text-left px-4 py-2.5 hover:bg-gray-100 flex items-center gap-3 text-sm text-gray-700"
           >
             <Archive className="w-4 h-4" />
-            Archive
+            {item.isArchived ? 'Unarchive' : 'Archive'}
           </button>
 
           <button
@@ -147,15 +164,15 @@ const ChatItem = ({ item, type, onSelectChat, activeTab, selectedChatId }: ChatI
             className="w-full text-left px-4 py-2.5 hover:bg-gray-100 flex items-center gap-3 text-sm text-gray-700"
           >
             <Star className="w-4 h-4" />
-            Star
+            {item.isStarred ? 'Unstar' : 'Star'}
           </button>
 
           <button
             onClick={() => handleAction('mute')}
             className="w-full text-left px-4 py-2.5 hover:bg-gray-100 flex items-center gap-3 text-sm text-gray-700"
           >
-            <Moon className="w-4 h-4" />
-            Mute
+            {item.isMuted ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+            {item.isMuted ? 'Unmute' : 'Mute'}
           </button>
         </div>
       )}
