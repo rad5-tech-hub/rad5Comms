@@ -80,23 +80,6 @@ const SettingsModal = ({ isOpen, onClose }: SettingsModalProps) => {
     };
   }, [isOpen]);
 
-  // const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-  //   const { name, value, type, checked } = e.target as any;
-  //   setFormData(prev => ({
-  //     ...prev,
-  //     [name]: type === 'checkbox' ? checked : value,
-  //   }));
-  // };
-
-  // const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-  //   const file = e.target.files?.[0];
-  //   if (!file) return;
-
-  //   setAvatarFile(file);
-  //   const url = URL.createObjectURL(file);
-  //   setAvatarPreview(url);
-  // };
-
   const handleSave = async () => {
     setIsSaving(true);
     const token = localStorage.getItem('token');

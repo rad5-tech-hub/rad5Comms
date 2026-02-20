@@ -34,11 +34,11 @@ const ForgotPassword = () => {
     }
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/auth/forgot-password`, { email });
-        toast.success(response.data.message || 'Reset code sent to your email!', {
+      await axios.post(`${API_BASE_URL}/auth/forgot-password`, { email });
+        toast.success('Reset code sent to your email!', {
           duration: 4000,
         });
-      setSuccess(response.data.message || 'Reset code sent to your email');
+      setSuccess('Reset code sent to your email');
       setStep('reset');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
@@ -75,7 +75,7 @@ const ForgotPassword = () => {
     }
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/auth/reset-password`, {
+      await axios.post(`${API_BASE_URL}/auth/reset-password`, {
         email,
         code: resetCode,
         newPassword,

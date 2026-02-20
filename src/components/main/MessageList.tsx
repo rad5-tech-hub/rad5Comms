@@ -8,13 +8,13 @@ import MessageBubble from './MessageBubble';
 import { format } from 'date-fns';
 
 interface MessageListProps {
-  messages?: any[] | null;          // Allow undefined / null
+  messages: any[] | null;          // Allow undefined / null
   isLoading: boolean;
   selectedChat: any;
   isTyping?: boolean;
 }
 
-const MessageList = ({ messages = [], isLoading, selectedChat, isTyping }: MessageListProps) => {
+const MessageList = ({ messages, isLoading, selectedChat, isTyping }: MessageListProps) => {
   // messages is now guaranteed to be [] even if parent passes undefined/null
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -76,7 +76,7 @@ const MessageList = ({ messages = [], isLoading, selectedChat, isTyping }: Messa
   }
 
   // Safe: messages is always array now
-  if (messages.length === 0) {
+  if (!messages || messages.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-center text-gray-500">
         <div className="text-5xl font-bold opacity-20 mb-4">No messages yet</div>
@@ -92,7 +92,7 @@ const MessageList = ({ messages = [], isLoading, selectedChat, isTyping }: Messa
   const groupedMessages: { date: string; messages: any[] }[] = [];
   let currentKey: string | null = null;
 
-  const sortedMessages = [...messages].sort((a, b) => {
+  const sortedMessages = [...(messages || [])].sort((a, b) => {
     const aTime = new Date(a.time).getTime();
     const bTime = new Date(b.time).getTime();
     if (aTime !== bTime) return aTime - bTime;
@@ -161,8 +161,8 @@ const MessageList = ({ messages = [], isLoading, selectedChat, isTyping }: Messa
                   message={msg}
                   showSenderName={selectedChat?.type === 'channel'}
                   channelId={selectedChat?.type === 'channel' ? selectedChat.id : undefined}
-                  onDelete={(msgId) => {}}
-                  onEdit={(msgId, newText) => {}}
+                  onDelete={(_msgId) => {}}
+                  onEdit={(_msgId, _newText) => {}}
                   onReply={(message) => {
                     const ev = new CustomEvent('start-reply', { detail: { message } });
                     window.dispatchEvent(ev);
