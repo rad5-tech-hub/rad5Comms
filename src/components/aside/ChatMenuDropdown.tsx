@@ -14,7 +14,7 @@ const ChatMenuDropdown = ({ onAction }: ChatMenuDropdownProps) => {
   };
 
   return (
-    <div className="absolute right-2 top-8 z-50 bg-white rounded-lg shadow-xl border border-gray-200 py-2 min-w-[140px]">
+    <div className="absolute right-2 top-8 z-50 bg-white rounded-lg shadow-xl border border-gray-200 py-2 min-w-35">
       <button
         onClick={(e) => handleAction(e, 'archive')}
         className="w-full text-left px-4 py-2 hover:bg-gray-100 flex items-center gap-2 text-sm"

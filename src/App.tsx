@@ -6,7 +6,7 @@ import HomePage from "./pages/HomePage";
 import { Toaster } from "sonner";
 import Auth from "./pages/Auth";
 import ForgotPassword from "./pages/ForgotPassword";
-import ProtectedRoute from "./components/ProtectedRoute";
+import ProtectedRoute from "./components/common/ProtectedRoute";
 
 function App() {
   useEffect(() => {

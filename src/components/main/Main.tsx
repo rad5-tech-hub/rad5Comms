@@ -29,6 +29,7 @@ interface Message {
   isOwn: boolean;
   hasImage?: boolean;
   hasAudio?: boolean;
+  mediaUrl?: string; // Added mediaUrl
   duration?: string;
   type?: 'system' | 'user';
   replyTo?: string;

@@ -28,6 +28,7 @@ interface MessageBubbleProps {
     isOwn: boolean;
     hasImage?: boolean;
     hasAudio?: boolean;
+    mediaUrl?: string; // Added mediaUrl
     duration?: string;
     replyTo?: string;
     replyToText?: string;
@@ -251,23 +252,38 @@ const MessageBubble = ({
                 </span>
               </button>
             )}
+
+            {/* Image Rendering */}
+            {message.hasImage && (message.mediaUrl || message.text) && (
+              <div className="mb-2 overflow-hidden rounded-lg">
+                <img
+                  src={message.mediaUrl || message.text} // Fallback to text if it contains URL
+                  alt="Sent image"
+                  className="max-w-full sm:max-w-70 h-auto object-cover rounded-lg hover:opacity-95 transition cursor-pointer"
+                  onClick={() => window.open(message.mediaUrl || message.text, "_blank")}
+                />
+              </div>
+            )}
+
+            {/* Audio Rendering */}
+            {message.hasAudio && (message.mediaUrl || message.text) && (
+              <div className="mb-2 min-w-50">
+                <audio controls src={message.mediaUrl || message.text} className="w-full h-10 rounded-full" />
+              </div>
+            )}
+
             {emojiOnly ? (
               <span
                 className={`text-6xl leading-none ${
                   message.isOwn ? "text-white" : "text-text-primary"
                 }`}
               >
-                {message.text}
+                {message.text !== 'Voice Note' && message.text !== 'Image' ? message.text : ''}
               </span>
             ) : (
-              message.text
+              // Only show text if it's not just the fallback "Image" or "Voice Note" text
+              (message.text && message.text !== 'Image' && message.text !== 'Voice Note') && <span>{message.text}</span>
             )}
-
-            {/* Placeholder for attachments/audio */}
-            {message.hasImage && (
-              <div className="mt-2 grid grid-cols-3 gap-2">...</div>
-            )}
-            {message.hasAudio && <div className="mt-2">Audio placeholder</div>}
 
             {/* Three-dot menu */}
             <button
