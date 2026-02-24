@@ -8,7 +8,7 @@ import MessageBubble from './MessageBubble';
 import { format } from 'date-fns';
 
 interface MessageListProps {
-  messages: any[] | null;          // Allow undefined / null
+  messages: any[] | null;
   isLoading: boolean;
   selectedChat: any;
   isTyping?: boolean;
@@ -160,7 +160,6 @@ const MessageList = ({ messages, isLoading, selectedChat, isTyping }: MessageLis
                 <MessageBubble
                   message={msg}
                   showSenderName={selectedChat?.type === 'channel'}
-                  channelId={selectedChat?.type === 'channel' ? selectedChat.id : undefined}
                   onDelete={(_msgId) => {}}
                   onEdit={(_msgId, _newText) => {}}
                   onReply={(message) => {

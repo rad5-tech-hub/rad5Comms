@@ -12,7 +12,7 @@ import CreateChannelModal from './CreateChannelModal';
 import NewConversationModal from './NewConversationModal';
 import 'react-loading-skeleton/dist/skeleton.css';
 import { AtSign, Moon, Plus, Users } from 'lucide-react';
-import { useWebSocket } from '../../context/ws';
+import { useWebSocket } from '../../context/webSocketContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -166,6 +166,53 @@ const Aside = ({ onSelectChat }: AsideProps) => {
       socket.off('new_message', onNewMessage);
     };
   }, [socket, channels]);
+
+  // DM real-time: listen for incoming DM messages to show notification toasts and update unread
+  useEffect(() => {
+    if (!socket) return;
+
+    const onNewDmMessage = (data: any) => {
+      const { dmId, message } = data || {};
+      if (!dmId || !message) return;
+
+      // Increment unread for the DM sender
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === dmId ? { ...u, unread: (u.unread || 0) + 1 } : u
+        )
+      );
+
+      // Show a toast notification
+      const user = users.find((u) => u.id === dmId);
+      const preview =
+        typeof message.text === 'string'
+          ? message.text.slice(0, 60)
+          : '[message]';
+      toast.info(`${user?.name || 'New DM'}: ${preview}`);
+    };
+
+    socket.on('new_dm_message', onNewDmMessage);
+    return () => {
+      socket.off('new_dm_message', onNewDmMessage);
+    };
+  }, [socket, users]);
+
+  // Global unread badge update from server
+  useEffect(() => {
+    const onUnreadUpdate = (e: Event) => {
+      const ce = e as CustomEvent<{ type: string; dmId?: string; senderId?: string }>;
+      const { dmId } = ce.detail;
+      if (dmId) {
+        setUsers((prev) =>
+          prev.map((u) =>
+            u.id === dmId ? { ...u, unread: (u.unread || 0) + 1 } : u
+          )
+        );
+      }
+    };
+    window.addEventListener('unread-update', onUnreadUpdate as EventListener);
+    return () => window.removeEventListener('unread-update', onUnreadUpdate as EventListener);
+  }, []);
 
   useEffect(() => {
     const onChatRead = (e: Event) => {

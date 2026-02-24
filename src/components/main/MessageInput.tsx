@@ -16,7 +16,6 @@ import {
 import EmojiPicker from 'emoji-picker-react';
 import axios from 'axios';
 import { toast } from 'sonner';
-import { useWebSocket } from '../../context/ws';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -29,26 +28,31 @@ interface MessageInputProps {
     sender: { id: string; name: string };
   } | null;
   onCancelReply?: () => void;
+  /** Emit typing indicator via socket */
+  sendTyping?: (isTyping: boolean) => void;
 }
 
-const MessageInput = ({ selectedChat, onMessageSent, replyTarget, onCancelReply }: MessageInputProps) => {
+const MessageInput = ({
+  selectedChat,
+  onMessageSent,
+  replyTarget,
+  onCancelReply,
+  sendTyping,
+}: MessageInputProps) => {
   const [message, setMessage] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  
-  // Media states
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const timerIntervalRef = useRef<number | null>(null);
-
-  const { socket } = useWebSocket();
+  
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const pickerRef = useRef<HTMLDivElement>(null);
   const plusMenuRef = useRef<HTMLDivElement>(null);
@@ -70,106 +74,107 @@ const MessageInput = ({ selectedChat, onMessageSent, replyTarget, onCancelReply 
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Handle Image Selection
-  const handleShareImage = () => {
-    fileInputRef.current?.click();
-    setShowPlusMenu(false);
-  };
-
+  // File handling
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) { // 5MB limit
-        toast.error('Image size should be less than 5MB');
-        return;
-      }
+    if (file && file.type.startsWith('image/')) {
       setSelectedImage(file);
-      const url = URL.createObjectURL(file);
-      setImagePreview(url);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setImagePreview(event.target?.result as string);
+      };
+      reader.readAsDataURL(file);
     }
   };
 
-  const clearImage = (revoke = true) => {
+  const clearImage = (revokeUrl = true) => {
+    if (imagePreview && revokeUrl) {
+      URL.revokeObjectURL(imagePreview);
+    }
     setSelectedImage(null);
-    if (revoke && imagePreview) URL.revokeObjectURL(imagePreview);
     setImagePreview(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  // Handle Audio Recording
-  const handleVoiceNote = async () => {
-    setShowPlusMenu(false);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      const chunks: BlobPart[] = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' });
-        setAudioBlob(blob);
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-      setRecordingDuration(0);
-
-      timerIntervalRef.current = window.setInterval(() => {
-        setRecordingDuration(prev => prev + 1);
-      }, 1000);
-
-    } catch (err) {
-      console.error('Error accessing microphone:', err);
-      toast.error('Could not access microphone');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    }
-  };
-
-  const cancelRecording = () => {
-    stopRecording();
-    setAudioBlob(null);
-    setRecordingDuration(0);
-  };
-
+  // Audio recording helpers
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        audioChunksRef.current.push(event.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setAudioBlob(blob);
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingDuration(0);
+
+      // Update recording duration
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error('Error accessing microphone:', err);
+      toast.error('Unable to access microphone');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+      setIsRecording(false);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
+    }
+  };
+
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+      setIsRecording(false);
+      setAudioBlob(null);
+      setRecordingDuration(0);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
+    }
+  };
+
   // Placeholder handlers
-  const handleAttachFile = () => {
-    toast.info('File attachment coming soon');
-    setShowPlusMenu(false);
-  };
-  const handleCreatePoll = () => {
-    toast.info('Polls coming soon');
-    setShowPlusMenu(false);
-  };
+  const handleAttachFile = () => fileInputRef.current?.click();
+  const handleVoiceNote = () => startRecording();
+  const handleShareImage = () => fileInputRef.current?.click();
+  const handleCreatePoll = () => console.log('Create poll');
 
   const handleSend = async () => {
-    if ((!message.trim() && !selectedImage && !audioBlob) || !selectedChat || isSending) return;
+    if (!message.trim() || !selectedChat || isSending) return;
 
-    setIsSending(true);
+    const textToSend = message;
 
     // Optimistic UI update (basic)
-    const tempId = Date.now().toString();
     const optimisticMessage = {
-      id: tempId,
+      id: Date.now().toString(),
       sender: { id: 'me', name: 'You', avatar: null },
-      text: message || (selectedImage ? 'Image' : 'Voice Note'),
+      text: textToSend,
       time: new Date().toISOString(),
       isOwn: true,
       hasImage: !!selectedImage,
@@ -185,16 +190,13 @@ const MessageInput = ({ selectedChat, onMessageSent, replyTarget, onCancelReply 
     onMessageSent?.(optimisticMessage);
     
     // Clear inputs immediately for better UX
-    const msgToSend = message;
-    const imgToSend = selectedImage;
-    const audioToSend = audioBlob;
-    
     setMessage('');
     // Do NOT revoke the URL here, as it's being used by the optimistic message
     clearImage(false); 
     setAudioBlob(null);
     setRecordingDuration(0);
     if (onCancelReply) onCancelReply();
+    setIsSending(true);
 
     try {
       const token = localStorage.getItem('token');
@@ -204,65 +206,36 @@ const MessageInput = ({ selectedChat, onMessageSent, replyTarget, onCancelReply 
       if (selectedChat.type === 'channel') {
         endpoint = `/channels/${selectedChat.id}/messages`;
       } else {
-        endpoint = `/dms/${selectedChat.id}/messages`; // DM endpoint
+        endpoint = `/dms/${selectedChat.id}/messages`;
       }
 
-      let payload: any;
-      const headers: any = { Authorization: `Bearer ${token}` };
-
-      if (imgToSend || audioToSend) {
-        // Step 1: Upload media to /upload endpoint
-        const formData = new FormData();
-        
-        if (imgToSend) {
-          formData.append('file', imgToSend);
-          formData.append('type', 'image');
-        } else if (audioToSend) {
-          formData.append('file', audioToSend, 'voicenote.webm');
-          formData.append('type', 'audio');
-          formData.append('duration', recordingDuration.toString());
-        }
-
-        try {
-          const uploadRes = await axios.post(`${API_BASE_URL}/upload`, formData, { headers });
-          const { url, type, duration } = uploadRes.data; // Expecting { url: '...', type: 'image'|'audio', ... }
-
-          // Step 2: Send message with media URL
-          payload = {
-            text: msgToSend || (type === 'image' ? 'Image' : 'Voice Note'),
-            replyTo: replyTarget?.id,
-            mediaUrl: url,
-            mediaType: type,
-            duration: duration, 
-            hasImage: type === 'image',
-            hasAudio: type === 'audio'
-          };
-        } catch (uploadErr) {
-          console.error('Upload failed', uploadErr);
-          toast.error('Failed to upload media');
-          setIsSending(false);
-          return;
-        }
-      } else {
-        payload = { text: msgToSend, replyTo: replyTarget?.id };
-      }
-
-      // Step 3: Post the message to the chat endpoint
-      const res = await axios.post(`${API_BASE_URL}${endpoint}`, payload, { headers });
-      
-      const newMessage = res.data?.message || res.data;
-      if (selectedChat.type === 'channel' && newMessage && socket) {
-        socket.emit('new_message', { channelId: selectedChat.id, message: newMessage });
-      }
-
+      // Just POST to REST — server broadcasts to socket room automatically
+      await axios.post(
+        `${API_BASE_URL}${endpoint}`,
+        { text: textToSend, replyTo: replyTarget?.id },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      // No client-side relay needed — server handles the broadcast
     } catch (err: any) {
+      console.error('[MessageInput] Send error:', err);
       toast.error(err.response?.data?.error || 'Failed to send message');
     } finally {
       setIsSending(false);
     }
   };
 
-  if (!selectedChat) return null; // Hide input completely when no chat
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setMessage(e.target.value);
+    if (selectedChat && sendTyping) {
+      sendTyping(true);
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = setTimeout(() => {
+        sendTyping(false);
+      }, 1500);
+    }
+  };
+
+  if (!selectedChat) return null;
 
   return (
     <div className="border-t border-border bg-gray-300 px-1 py-2 relative flex flex-col items-center justify-center">
@@ -390,29 +363,20 @@ const MessageInput = ({ selectedChat, onMessageSent, replyTarget, onCancelReply 
               )}
             </div>
 
-            <input
-              ref={inputRef}
-              type="text"
-              value={message}
-              onChange={(e) => {
-                setMessage(e.target.value);
-                if (selectedChat && socket) {
-                  socket.emit('typing', { channelId: selectedChat.id, isTyping: true });
-                  if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-                  typingTimerRef.current = setTimeout(() => {
-                    socket.emit('typing', { channelId: selectedChat!.id, isTyping: false });
-                  }, 1500);
-                }
-              }}
-              placeholder="Type a message..."
-              className="flex-1 bg-transparent outline-none text-text-primary placeholder:text-text-secondary px-1 md:px-3"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-            />
+        <input
+          ref={inputRef}
+          type="text"
+          value={message}
+          onChange={handleInputChange}
+          placeholder="Type a message..."
+          className="flex-1 bg-transparent outline-none text-text-primary placeholder:text-text-secondary px-1 md:px-3"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              handleSend();
+            }
+          }}
+        />
 
             <button
               onClick={handleSend}

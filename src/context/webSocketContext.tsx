@@ -1,22 +1,9 @@
-// src/context/WebSocketContext.tsx
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { toast } from 'sonner';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+const WS_BASE_URL = import.meta.env.VITE_API_WEBHOOK_URL;
 
-interface Message {
-  // Define your message type according to your data structure
-  id: string;
-  sender: { id: string; name: string; avatar?: string };
-  text: string;
-  time: string;
-  isOwn: boolean;
-  status?: 'sent' | 'delivered' | 'read';
-  tempId?: string;
-}
-
-interface WebSocketContextType {
+export interface WebSocketContextType {
   socket: Socket | null;
   isConnected: boolean;
   onlineUsers: string[];
@@ -32,82 +19,125 @@ interface WebSocketProviderProps {
   children: ReactNode;
 }
 
+let globalSocket: Socket | null = null;
+let globalSocketToken: string | null = null;
+let isConnecting = false;
+
 export const WebSocketProvider = ({ children }: WebSocketProviderProps) => {
   const [isConnected, setIsConnected] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState<string[]>([]);
-
-  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-
-  const socket = useMemo(() => {
-    if (!token) return null;
-    return io(API_BASE_URL, {
-      path: '/ws',
-      query: { token },
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 2000,
-      reconnectionDelayMax: 10000,
-      timeout: 20000,
-      transports: ['websocket'],
-    });
-  }, [token]);
+  const [socketState, setSocketState] = useState<Socket | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    if (!socket) return;
+    mountedRef.current = true;
 
-    socket.on('connect', () => {
-      console.log('🔌 WebSocket connected');
-      setIsConnected(true);
-      toast.success('Connected to real-time chat');
-    });
+    const connectSocket = () => {
+      const token = localStorage.getItem('token');
 
-    socket.on('disconnect', (reason) => {
-      console.log('🔌 WebSocket disconnected:', reason);
-      setIsConnected(false);
-      if (reason === 'io server disconnect') {
-        toast.error('Disconnected from chat. Please log in again.');
-      } else if (reason === 'transport close' || reason === 'ping timeout') {
-        toast.warning('Network issue detected. Please check your connection.');
+      if (isConnecting) return;
+
+      // Reuse existing connected socket for same token
+      if (globalSocket && globalSocketToken === token && globalSocket.connected) {
+        console.log('🔌 Reusing existing WebSocket connection, id:', globalSocket.id);
+        if (mountedRef.current) {
+          setSocketState(globalSocket);
+          setIsConnected(true);
+        }
+        return;
       }
-    });
 
-    socket.on('online_users', (users: string[]) => {
-      setOnlineUsers(users);
-    });
+      // Disconnect existing socket if token changed or disconnected
+      if (globalSocket) {
+        globalSocket.removeAllListeners();
+        globalSocket.disconnect();
+        globalSocket = null;
+        globalSocketToken = null;
+      }
 
-    // Centralized event listeners for message status
-    socket.on('messageSent', (message: Message) => {
-      window.dispatchEvent(new CustomEvent('message-status-update', { detail: { messageId: message.id, status: 'sent', tempId: message.tempId } }));
-    });
-    
-    socket.on('messageDelivered', (data: { messageId: string, recipientId: string }) => {
-        window.dispatchEvent(new CustomEvent('message-status-update', { detail: { messageId: data.messageId, status: 'delivered' } }));
-    });
-    
-    socket.on('messageRead', (data: { messageId: string, readerId: string }) => {
-        window.dispatchEvent(new CustomEvent('message-status-update', { detail: { messageId: data.messageId, status: 'read' } }));
-    });
+      if (!token) {
+        if (mountedRef.current) {
+          setSocketState(null);
+          setIsConnected(false);
+          setOnlineUsers([]);
+        }
+        return;
+      }
 
+      console.log('🔌 Creating WebSocket connection to', WS_BASE_URL);
+      isConnecting = true;
+
+      const newSocket = io(WS_BASE_URL, {
+        path: '/ws',
+        query: { token },
+        transports: ['websocket'],
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        timeout: 20000,
+      });
+
+      newSocket.on('connect', () => {
+        console.log('🔌 WebSocket connected, id:', newSocket.id, '| transport:', newSocket.io.engine?.transport?.name);
+        isConnecting = false;
+        if (mountedRef.current) {
+          setIsConnected(true);
+          setSocketState(newSocket); // ← set AFTER connected, not before
+        }
+      });
+
+      newSocket.onAny((eventName: string, ...args: unknown[]) => {
+        console.log(`📨 [socket event] ${eventName}:`, ...args);
+      });
+
+      newSocket.on('connect_error', (err) => {
+        console.error('🔌 WebSocket connection error:', err.message);
+        isConnecting = false;
+      });
+
+      newSocket.on('disconnect', (reason) => {
+        console.log('🔌 WebSocket disconnected:', reason);
+        if (mountedRef.current) setIsConnected(false);
+      });
+
+      newSocket.on('online_users', (users: string[]) => {
+        if (mountedRef.current) setOnlineUsers(users);
+      });
+
+      newSocket.on('user_presence', ({ userId, status }: { userId: string; status: 'online' | 'offline' }) => {
+        if (!mountedRef.current) return;
+        setOnlineUsers((prev) => {
+          if (status === 'online' && !prev.includes(userId)) return [...prev, userId];
+          if (status === 'offline') return prev.filter((id) => id !== userId);
+          return prev;
+        });
+      });
+
+      newSocket.on('unread_update', ({ type, dmId, senderId }: { type: string; dmId?: string; senderId?: string }) => {
+        window.dispatchEvent(
+          new CustomEvent('unread-update', { detail: { type, dmId, senderId } })
+        );
+      });
+
+      globalSocket = newSocket;
+      globalSocketToken = token;
+      // NOTE: do NOT setSocketState here — wait for 'connect' event above
+    };
+
+    connectSocket();
+
+    const onAuthChange = () => connectSocket();
+    window.addEventListener('auth-change', onAuthChange);
 
     return () => {
-      socket.off('connect');
-      socket.off('disconnect');
-      socket.off('online_users');
-      socket.off('messageSent');
-      socket.off('messageDelivered');
-      socket.off('messageRead');
-      socket.disconnect();
+      mountedRef.current = false;
+      window.removeEventListener('auth-change', onAuthChange);
     };
-  }, [socket]);
-
-  const contextValue = useMemo(() => ({
-    socket,
-    isConnected,
-    onlineUsers,
-  }), [socket, isConnected, onlineUsers]);
+  }, []);
 
   return (
-    <WebSocketContext.Provider value={contextValue}>
+    <WebSocketContext.Provider value={{ socket: socketState, isConnected, onlineUsers }}>
       {children}
     </WebSocketContext.Provider>
   );

@@ -15,7 +15,6 @@ import { Check, CheckCheck } from "lucide-react";
 import EmojiPicker from "emoji-picker-react";
 import axios from "axios";
 import { toast } from "sonner";
-import { useWebSocket } from "../../context/ws";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -36,13 +35,15 @@ interface MessageBubbleProps {
     reactions?: Array<{ emoji: string; count: number }>;
     status?: 'sent' | 'delivered' | 'read';
   };
-  onDelete?: (messageId: string) => void; // callback to remove from list
-  onEdit?: (messageId: string, newText: string) => void; // callback to update list
-  onReply?: (message: any) => void; // optional reply feature
-  onForward?: (message: any) => void; // optional forward feature
+  onDelete?: (messageId: string) => void;
+  onEdit?: (messageId: string, newText: string) => void;
+  onReply?: (message: any) => void;
+  onForward?: (message: any) => void;
   onScrollToMessage?: (targetId: string) => void;
   showSenderName?: boolean;
   channelId?: string;
+  /** Relay reaction via the correct socket hook (channel or DM) */
+  relayReaction?: (messageId: string, emoji: string, action: 'add' | 'remove') => void;
 }
 
 const MessageBubble = ({
@@ -53,14 +54,13 @@ const MessageBubble = ({
   onForward,
   onScrollToMessage,
   showSenderName = false,
-  channelId,
+  relayReaction,
 }: MessageBubbleProps) => {
   const [showMenu, setShowMenu] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(message.text);
   const [showConfirm, setShowConfirm] = useState(false);
-  const { socket } = useWebSocket();
 
   const menuRef = useRef<HTMLDivElement>(null);
   const emojiRef = useRef<HTMLDivElement>(null);
@@ -94,16 +94,14 @@ const MessageBubble = ({
         { headers: { Authorization: `Bearer ${token}` } },
       );
 
-      // toast.success("Reaction added!");
       setShowEmojiPicker(false);
-      if (socket && channelId) {
-        socket.emit("reaction_update", {
-          channelId,
-          messageId: message.id,
-          emoji: emojiData.emoji,
-          action: "added",
-        });
+
+      // Relay via socket hook (works for both channel & DM)
+      if (relayReaction) {
+        relayReaction(message.id, emojiData.emoji, 'add');
       }
+
+      // Also dispatch local event for immediate UI update
       const ev = new CustomEvent("reaction-update", {
         detail: {
           messageId: message.id,
@@ -118,7 +116,6 @@ const MessageBubble = ({
   };
 
   const handleDelete = async () => {
-
     try {
       const token = localStorage.getItem("token");
       await axios.delete(`${API_BASE_URL}/messages/${message.id}`, {

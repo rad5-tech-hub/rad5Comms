@@ -21,14 +21,24 @@ const Auth = () => {
 
   const navigate = useNavigate();
 
-  // Auto-login check on mount
+  // Auto-login check on mount — validate token before redirecting
   useEffect(() => {
     const token = localStorage.getItem('token');
 
     if (token) {
-      // Optional: validate token by calling a protected endpoint
-      // For now, we assume if token exists → user is logged in
-      navigate('/home');
+      // Validate token by calling a protected endpoint
+      axios
+        .get(`${API_BASE_URL}/users/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        .then(() => {
+          navigate('/home');
+        })
+        .catch(() => {
+          // Token is invalid or expired — clear it
+          localStorage.removeItem('token');
+          setIsLoading(false);
+        });
     } else {
       setIsLoading(false); // no token → show login form
     }
@@ -68,8 +78,9 @@ const Auth = () => {
         duration: 3000,
       });
 
-      // Save token and redirect
+      // Save token and trigger WebSocket connection
       localStorage.setItem('token', response.data.token);
+      window.dispatchEvent(new Event('auth-change'));
       navigate('/home');
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

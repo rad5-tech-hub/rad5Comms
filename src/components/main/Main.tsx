@@ -9,7 +9,9 @@ import ChatPlaceholder from './ChatPlaceholder';
 import MessageList from './MessageList';
 import MessageInput from './MessageInput';
 import SettingsModal from '../../pages/Settings';
-import { useWebSocket } from '../../context/ws';
+import { useWebSocket } from '../../context/webSocketContext';
+import { useChannel } from '../../hooks/useChannel';
+import { useDm } from '../../hooks/useDm';
 import ForwardModal from './ForwardModal';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -39,14 +41,85 @@ interface Message {
   status?: 'sent' | 'delivered' | 'read';
 }
 
+// Helper to apply a reaction update to message list
+const applyReaction = (messages: Message[], messageId: string, emoji: string, action: string): Message[] =>
+  messages.map((m) => {
+    if (m.id !== messageId) return m;
+    const existing = m.reactions || [];
+    const idx = existing.findIndex((r) => r.emoji === emoji);
+    if (action === 'added' || action === 'add') {
+      if (idx >= 0) {
+        const next = [...existing];
+        next[idx] = { emoji, count: next[idx].count + 1 };
+        return { ...m, reactions: next };
+      }
+      return { ...m, reactions: [...existing, { emoji, count: 1 }] };
+    } else {
+      if (idx >= 0) {
+        const next = [...existing];
+        const newCount = next[idx].count - 1;
+        if (newCount <= 0) {
+          next.splice(idx, 1);
+        } else {
+          next[idx] = { emoji, count: newCount };
+        }
+        return { ...m, reactions: next };
+      }
+      return m;
+    }
+  });
+
 const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProps) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
   const [forwardSource, setForwardSource] = useState<Message | null>(null);
-  const { socket, onlineUsers } = useWebSocket();
+  const { onlineUsers } = useWebSocket();
   const [isPeerTyping, setIsPeerTyping] = useState(false);
+
+  // For DMs: the actual conversation ID resolved from the backend (≠ recipient user ID)
+  const [resolvedDmId, setResolvedDmId] = useState<string | undefined>(undefined);
+
+  // Determine which ID to pass into each hook
+  const channelId = selectedChat?.type === 'channel' ? selectedChat.id : undefined;
+  const dmId = selectedChat?.type === 'dm' ? resolvedDmId : undefined;
+
+  // Shared event callbacks — server broadcasts these automatically on REST calls
+  const sharedCallbacks = {
+    onMessage: (msg: any) => setMessages((prev) => [...prev, msg]),
+    onEdited: (messageId: string, text: string) =>
+      setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, text } : m))),
+    onDeleted: (messageId: string) =>
+      setMessages((prev) => prev.filter((m) => m.id !== messageId)),
+    onTyping: (_userId: string, isTyping: boolean) => setIsPeerTyping(isTyping),
+    onStatusUpdate: (data: any) => {
+      const { messageId, status } = data;
+      if (messageId && status) {
+        setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, status } : m)));
+      }
+    },
+    onReaction: (data: any) => {
+      const { messageId, emoji, action } = data;
+      setMessages((prev) => applyReaction(prev, messageId, emoji, action));
+    },
+  };
+
+  // Hooks: server broadcasts events; hooks only expose sendTyping + markRead
+  const { sendTyping: channelSendTyping, markRead: channelMarkRead } =
+    useChannel(channelId, sharedCallbacks);
+
+  const { sendTyping: dmSendTyping, markRead: dmMarkRead } =
+    useDm(dmId, sharedCallbacks);
+
+  // Unified functions based on chat type
+  const sendTyping = selectedChat?.type === 'channel' ? channelSendTyping : dmSendTyping;
+
+  // Reset state when chat changes
+  useEffect(() => {
+    setIsPeerTyping(false);
+    setResolvedDmId(undefined);
+  }, [selectedChat?.id]);
 
   // Fetch messages
   useEffect(() => {
@@ -72,29 +145,52 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
         if (selectedChat.type === 'channel') {
           endpointBase = `/channels/${chatId}`;
         } else {
-          // DM: ensure personal chat exists
+          // DM: resolve the actual conversation ID (≠ recipient user ID)
+          let conversationId: string | null = null;
+
           try {
-            // Step 1: Try to create/init personal chat (idempotent or returns existing)
             const createRes = await axios.post(
               `${API_BASE_URL}/dms/${selectedChat.id}`,
-              {}, // empty body or { name: selectedChat.name } if needed
+              {},
               { headers: { Authorization: `Bearer ${token}` } }
             );
-
-            // If backend returns the chat object with ID (or just 201)
-            chatId = createRes.data?.id || selectedChat.id;
-            endpointBase = `/dms/${chatId}`;
+            conversationId =
+              createRes.data?.dm?.id ||
+              createRes.data?.id ||
+              createRes.data?.dmId ||
+              null;
           } catch (createErr: any) {
-            if (createErr.response?.status !== 409 && createErr.response?.status !== 400) {
-              // 409 = already exists (common), ignore
+            if (createErr.response?.status === 409 || createErr.response?.status === 400) {
+              const errData = createErr.response?.data;
+              conversationId =
+                errData?.dm?.id || errData?.id || errData?.dmId || errData?.existingDmId || null;
+            } else {
               throw createErr;
             }
-            // Already exists → proceed with original ID
-            endpointBase = `/dms/${selectedChat.id}`;
           }
+
+          // Fallback: try GET /dms/:recipientId
+          if (!conversationId) {
+            try {
+              const getRes = await axios.get(
+                `${API_BASE_URL}/dms/${selectedChat.id}`,
+                { headers: { Authorization: `Bearer ${token}` } }
+              );
+              conversationId =
+                getRes.data?.dm?.id || getRes.data?.id || getRes.data?.dmId || null;
+            } catch {
+              // ignore
+            }
+          }
+
+          chatId = conversationId || selectedChat.id;
+          endpointBase = `/dms/${chatId}`;
+
+          console.log('[Main] resolved DM conversation ID:', chatId, '(recipient:', selectedChat.id, ')');
+          setResolvedDmId(chatId);
         }
 
-        // Step 2: Fetch messages
+        // Fetch messages
         const response = await axios.get(`${API_BASE_URL}${endpointBase}/messages`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -103,33 +199,35 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
         const raw = Array.isArray(data) ? data : [];
         const idMap = new Map<string, any>(raw.map((m: any) => [String(m.id), m]));
         const normalized = raw.map((m: any) => {
-          const rt =
-            m.replyTo ??
-            m.reply_to ??
-            m.reply_id ??
-            m.parentMessageId ??
-            m.parent_id;
+          const rt = m.replyTo ?? m.reply_to ?? m.reply_id ?? m.parentMessageId ?? m.parent_id;
           if (rt) {
             const ref = idMap.get(String(rt));
             return {
               ...m,
               replyTo: String(rt),
               replyToText: m.replyToText ?? ref?.text ?? m.reply_to_text ?? null,
-              replyToSender:
-                m.replyToSender ?? ref?.sender?.name ?? m.reply_to_sender ?? null,
+              replyToSender: m.replyToSender ?? ref?.sender?.name ?? m.reply_to_sender ?? null,
             };
           }
           return m;
         });
         setMessages(normalized);
 
+        // Mark all fetched messages as read
+        const messageIds = normalized.map((m: any) => m.id);
+        if (messageIds.length > 0) {
+          if (selectedChat.type === 'channel') {
+            channelMarkRead(messageIds);
+          } else {
+            dmMarkRead(messageIds);
+          }
+        }
       } catch (err: any) {
-        console.error('DM init/fetch error:', err);
+        console.error('Chat init/fetch error:', err);
         const msg = err.response?.data?.error || 'Failed to load or initialize chat';
         toast.error(msg);
 
         if (err.response?.status === 404) {
-          // If backend still says not found after create attempt
           setMessages([]);
         }
       } finally {
@@ -138,7 +236,7 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
     };
 
     initAndFetchMessages();
-}, [selectedChat]);
+  }, [selectedChat]);
 
   useEffect(() => {
     const onStartReply = (e: Event) => {
@@ -148,7 +246,6 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
     const onStartForward = (e: Event) => {
       const ce = e as CustomEvent<{ message: Message }>;
       setForwardSource(ce.detail.message);
-      // open modal here (to be implemented)
     };
     window.addEventListener('start-reply', onStartReply as EventListener);
     window.addEventListener('start-forward', onStartForward as EventListener);
@@ -157,6 +254,7 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
       window.removeEventListener('start-forward', onStartForward as EventListener);
     };
   }, []);
+
   useEffect(() => {
     const onMemberAdded = (e: Event) => {
       const ce = e as CustomEvent<{
@@ -185,129 +283,12 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
     setReplyTarget(null);
   };
 
-  useEffect(() => {
-    if (!socket || !selectedChat || selectedChat.type !== 'channel') return;
-    const channelId = selectedChat.id;
-    socket.emit('join_channel', { channelId });
-
-    const onNewMessage = (data: any) => {
-      if (data?.channelId !== channelId) return;
-      const incoming = data.message;
-      if (!incoming) return;
-      setMessages((prev) => [...prev, incoming]);
-    };
-    const onTyping = (data: any) => {
-      if (data?.channelId !== channelId) return;
-      setIsPeerTyping(Boolean(data.isTyping));
-    };
-    const onMessageEdited = (data: any) => {
-      if (data?.channelId !== channelId) return;
-      setMessages((prev) =>
-        prev.map((m) => (m.id === data.messageId ? { ...m, text: data.text } as Message : m))
-      );
-    };
-    const onMessageDeleted = (data: any) => {
-      if (data?.channelId !== channelId) return;
-      setMessages((prev) => prev.filter((m) => m.id !== data.messageId));
-    };
-    const onMessageDelivered = (data: any) => {
-      if (data?.channelId !== channelId) return;
-      const { messageId } = data;
-      setMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, status: 'delivered' } : m))
-      );
-    };
-    const onMessageRead = (data: any) => {
-      if (data?.channelId !== channelId) return;
-      const { messageId } = data;
-      setMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, status: 'read' } : m))
-      );
-    };
-
-    const onReactionUpdate = (data: any) => {
-      if (data?.channelId !== channelId) return;
-      const { messageId, emoji, action } = data;
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== messageId) return m;
-          const existing = m.reactions || [];
-          const idx = existing.findIndex((r) => r.emoji === emoji);
-          if (action === 'added') {
-            if (idx >= 0) {
-              const next = [...existing];
-              next[idx] = { emoji, count: next[idx].count + 1 };
-              return { ...m, reactions: next };
-            }
-            return { ...m, reactions: [...existing, { emoji, count: 1 }] };
-          } else {
-            if (idx >= 0) {
-              const next = [...existing];
-              const newCount = next[idx].count - 1;
-              if (newCount <= 0) {
-                next.splice(idx, 1);
-              } else {
-                next[idx] = { emoji, count: newCount };
-              }
-              return { ...m, reactions: next };
-            }
-            return m;
-          }
-        })
-      );
-    };
-
-    socket.on('new_message', onNewMessage);
-    socket.on('typing', onTyping);
-    socket.on('message_edited', onMessageEdited);
-    socket.on('message_deleted', onMessageDeleted);
-    socket.on('reaction_update', onReactionUpdate);
-    socket.on('message_delivered', onMessageDelivered);
-    socket.on('message_read', onMessageRead);
-
-    return () => {
-      socket.emit('leave_channel', { channelId });
-      socket.off('new_message', onNewMessage);
-      socket.off('typing', onTyping);
-      socket.off('message_edited', onMessageEdited);
-      socket.off('message_deleted', onMessageDeleted);
-        socket.off('reaction_update', onReactionUpdate);
-      socket.off('message_delivered', onMessageDelivered);
-      socket.off('message_read', onMessageRead);
-    };
-  }, [socket, selectedChat]);
-
+  // Local reaction handler (from MessageBubble custom events)
   useEffect(() => {
     const onLocalReaction = (e: Event) => {
       const ce = e as CustomEvent<{ messageId: string; emoji: string; action: 'added' | 'removed' }>;
       const { messageId, emoji, action } = ce.detail;
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== messageId) return m;
-          const existing = m.reactions || [];
-          const idx = existing.findIndex((r) => r.emoji === emoji);
-          if (action === 'added') {
-            if (idx >= 0) {
-              const next = [...existing];
-              next[idx] = { emoji, count: next[idx].count + 1 };
-              return { ...m, reactions: next };
-            }
-            return { ...m, reactions: [...existing, { emoji, count: 1 }] };
-          } else {
-            if (idx >= 0) {
-              const next = [...existing];
-              const newCount = next[idx].count - 1;
-              if (newCount <= 0) {
-                next.splice(idx, 1);
-              } else {
-                next[idx] = { emoji, count: newCount };
-              }
-              return { ...m, reactions: next };
-            }
-            return m;
-          }
-        })
-      );
+      setMessages((prev) => applyReaction(prev, messageId, emoji, action));
     };
     window.addEventListener('reaction-update', onLocalReaction as EventListener);
     return () => window.removeEventListener('reaction-update', onLocalReaction as EventListener);
@@ -340,8 +321,8 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
               onMessageSent={handleMessageSent}
               replyTarget={replyTarget}
               onCancelReply={() => setReplyTarget(null)}
+              sendTyping={sendTyping}
             />
-            {/* <MessageInput selectedChat={selectedChat} onMessageSent={handleMessageSent} /> */}
           </>
         )}
 

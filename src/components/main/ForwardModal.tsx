@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { X, Search, Hash, Send } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'sonner';
-import { useWebSocket } from '../../context/ws';
+import { useWebSocket } from '../../context/webSocketContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
