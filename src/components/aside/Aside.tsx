@@ -10,8 +10,9 @@ import AsideTabs from './AsideTabs';
 import ChatSection from './ChatSection';
 import CreateChannelModal from './CreateChannelModal';
 import NewConversationModal from './NewConversationModal';
+import SettingsModal from '../../pages/Settings';
 import 'react-loading-skeleton/dist/skeleton.css';
-import { AtSign, Moon, Plus, Users } from 'lucide-react';
+import { AtSign, Plus, Users } from 'lucide-react';
 import { useWebSocket } from '../../context/webSocketContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -81,6 +82,7 @@ const Aside = ({ onSelectChat }: AsideProps) => {
 
   const [showCreateChannelModal, setShowCreateChannelModal] = useState(false);
   const [showNewConversationModal, setShowNewConversationModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   const navigate = useNavigate();
   const { socket } = useWebSocket();
@@ -145,57 +147,106 @@ const Aside = ({ onSelectChat }: AsideProps) => {
 
   useEffect(() => {
     if (!socket) return;
-    channels.forEach((ch) => socket.emit('join_channel', { channelId: ch.id }));
+    
     const onNewMessage = (data: any) => {
-      const { channelId, message } = data || {};
-      if (!channelId || !message) return;
-      setChannels((prev) =>
-        prev.map((ch) =>
-          ch.id === channelId ? { ...ch, unread: (ch.unread || 0) + 1 } : ch
-        )
-      );
-      const ch = channels.find((c) => c.id === channelId);
-      const preview =
-        typeof message.text === 'string'
-          ? message.text.slice(0, 60)
-          : '[message]';
-      toast.info(`${ch?.name || 'New message'}: ${preview}`);
+      // Correct structure from WEBSOCKET_INTEGRATION.md is { message: ... }
+      const message = data.message || data;
+      const channelId = message.channelId;
+
+      if (!channelId) return;
+
+      setChannels((prev) => {
+        const index = prev.findIndex((ch) => ch.id === channelId);
+        // If channel exists, move to top
+        if (index !== -1) {
+          const updatedChannel = { ...prev[index] };
+          
+          // Update unread count if we are NOT currently in that channel
+          if (channelId !== selectedChatId) {
+            updatedChannel.unread = (updatedChannel.unread || 0) + 1;
+          }
+
+          const newChannels = [...prev];
+          newChannels.splice(index, 1);
+          newChannels.unshift(updatedChannel);
+          return newChannels;
+        }
+        return prev;
+      });
+        
+      // Toast notification for incoming messages not in current chat
+      if (channelId !== selectedChatId) {
+        const ch = channels.find((c) => c.id === channelId);
+        // Only show toast if it's an actual incoming message (roughly check via unread increment logic or just show it)
+        // Ideally we check sender != me, but message.senderId might vary. 
+        // Assuming we want toasts for incoming.
+        const preview = typeof message.text === 'string' 
+          ? message.text.slice(0, 60) 
+          : '[Media]';
+        toast.info(`New message in #${ch?.name || 'channel'}: ${preview}`);
+      }
     };
+
     socket.on('new_message', onNewMessage);
     return () => {
       socket.off('new_message', onNewMessage);
     };
-  }, [socket, channels]);
+  }, [socket, channels, selectedChatId]);
 
-  // DM real-time: listen for incoming DM messages to show notification toasts and update unread
+  // DM real-time: listen for incoming DM messages
   useEffect(() => {
     if (!socket) return;
 
     const onNewDmMessage = (data: any) => {
-      const { dmId, message } = data || {};
-      if (!dmId || !message) return;
+      const message = data.message || data;
+      const senderId = message.sender?.id || message.senderId;
+      const recipientId = message.recipientId; // Depending on payload
+      
+      // Determine the partner ID (the user in our list)
+      // If I sent it, partner is recipient. If I received it, partner is sender.
+      let partnerId = senderId;
+      if (senderId === currentUserId) {
+         // If I am sender, try to find who I sent it to
+         // data.dmId might be helpful if it matches user ID, or recipientId
+         partnerId = recipientId || data.dmId;
+      }
+      
+      if (!partnerId) return;
 
-      // Increment unread for the DM sender
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.id === dmId ? { ...u, unread: (u.unread || 0) + 1 } : u
-        )
-      );
+      setUsers((prev) => {
+        const index = prev.findIndex((u) => u.id === partnerId || u.id === senderId); // loose check
+        
+        if (index !== -1) {
+          const updatedUser = { ...prev[index] };
+          
+          // Increment unread only if incoming (sender != me) and not selected
+          if (senderId !== currentUserId && updatedUser.id !== selectedChatId) {
+            updatedUser.unread = (updatedUser.unread || 0) + 1;
+          }
 
-      // Show a toast notification
-      const user = users.find((u) => u.id === dmId);
-      const preview =
-        typeof message.text === 'string'
-          ? message.text.slice(0, 60)
-          : '[message]';
-      toast.info(`${user?.name || 'New DM'}: ${preview}`);
+          const newUsers = [...prev];
+          newUsers.splice(index, 1);
+          newUsers.unshift(updatedUser);
+          return newUsers;
+        }
+        return prev;
+      });
+
+      // Toast only for incoming
+      if (senderId !== currentUserId && partnerId !== selectedChatId && senderId !== selectedChatId) {
+        const user = users.find((u) => u.id === senderId);
+        const preview = typeof message.text === 'string' 
+          ? message.text.slice(0, 60) 
+          : '[Media]';
+        toast.info(`New DM from ${user?.name || 'User'}: ${preview}`);
+      }
     };
 
     socket.on('new_dm_message', onNewDmMessage);
     return () => {
       socket.off('new_dm_message', onNewDmMessage);
     };
-  }, [socket, users]);
+  }, [socket, users, selectedChatId, currentUserId]);
 
   // Global unread badge update from server
   useEffect(() => {
@@ -260,6 +311,8 @@ const Aside = ({ onSelectChat }: AsideProps) => {
       );
     }
   };
+
+  const currentUser = users.find((u) => u.id === currentUserId);
 
   const handleSelectChat = (chatId: string, type: 'channel' | 'dm', name?: string) => {
     setSelectedChatId(chatId);
@@ -341,8 +394,21 @@ const Aside = ({ onSelectChat }: AsideProps) => {
           <Plus className="w-4 h-4" />
           New Conversation
         </button>
-        <button className="p-3 bg-white/10 hover:bg-white/20 rounded-full transition flex items-center justify-center">
-          <Moon className="w-4 h-4" />
+        <button 
+          onClick={() => setShowSettingsModal(true)}
+          className="w-10 h-10 rounded-full overflow-hidden border-2 border-transparent hover:border-blue-500 transition-all cursor-pointer bg-gray-700 flex items-center justify-center"
+        >
+          {currentUser?.avatar ? (
+            <img 
+              src={currentUser.avatar} 
+              alt="Profile" 
+              className="w-full h-full object-cover" 
+            />
+          ) : (
+            <span className="text-sm font-bold text-white">
+              {currentUser?.name?.charAt(0).toUpperCase() || 'U'}
+            </span>
+          )}
         </button>
       </div>
 
@@ -355,6 +421,11 @@ const Aside = ({ onSelectChat }: AsideProps) => {
         isOpen={showNewConversationModal}
         onClose={() => setShowNewConversationModal(false)}
         onSelectChat={handleSelectChat}
+      />
+
+      <SettingsModal
+        isOpen={showSettingsModal}
+        onClose={() => setShowSettingsModal(false)}
       />
     </div>
   );

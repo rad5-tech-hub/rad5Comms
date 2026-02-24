@@ -2,7 +2,8 @@
 // src/components/settings/SettingsModal.tsx
 import { useState, useEffect, useRef } from 'react';
 import '../App.css';
-import { X, User, Camera, Mail, Loader2 } from 'lucide-react';
+import { X, User, Camera, Mail, Loader2, LogOut } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { toast } from 'sonner';
 
@@ -34,6 +35,14 @@ const SettingsModal = ({ isOpen, onClose }: SettingsModalProps) => {
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    toast.success('Logged out successfully');
+    navigate('/');
+    onClose();
+  };
 
   // Fetch current user data on modal open
   useEffect(() => {
@@ -287,6 +296,14 @@ const SettingsModal = ({ isOpen, onClose }: SettingsModalProps) => {
                         className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none bg-transparent text-white"
                       />
                     </div>
+                    
+                    <button
+                      onClick={handleLogout}
+                      className="w-full mt-4 flex items-center justify-center gap-2 py-2.5 bg-red-600/10 text-red-500 hover:bg-red-600/20 rounded-lg transition-colors cursor-pointer"
+                    >
+                      <LogOut size={18} />
+                      Log Out
+                    </button>
                   </div>
                 </div>
               )}

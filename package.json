@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.1.18", 
+    "@tailwindcss/vite": "^4.1.18",
     "@types/date-fns": "^2.5.3",
     "@types/react-infinite-scroll-component": "^4.2.5",
     "axios": "^1.13.2",
@@ -27,6 +27,7 @@
     "socket.io-client": "^4.8.3",
     "sonner": "^2.0.7",
     "tailwindcss": "^4.1.18",
+    "vite-plugin-pwa": "^1.2.0",
     "zustand": "^5.0.10"
   },
   "devDependencies": {

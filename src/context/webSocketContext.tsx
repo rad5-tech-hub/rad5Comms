@@ -1,7 +1,9 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
 
-const WS_BASE_URL = import.meta.env.VITE_API_WEBHOOK_URL;
+// Use VITE_API_WEBHOOK_URL if available (for separate socket server), 
+// otherwise fallback to VITE_API_BASE_URL (but without the /api suffix if needed)
+const WS_BASE_URL = import.meta.env.VITE_API_WEBHOOK_URL || import.meta.env.VITE_API_BASE_URL?.replace('/api', '');
 
 export interface WebSocketContextType {
   socket: Socket | null;
@@ -9,6 +11,7 @@ export interface WebSocketContextType {
   onlineUsers: string[];
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const WebSocketContext = createContext<WebSocketContextType>({
   socket: null,
   isConnected: false,
@@ -143,4 +146,5 @@ export const WebSocketProvider = ({ children }: WebSocketProviderProps) => {
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useWebSocket = () => useContext(WebSocketContext);
