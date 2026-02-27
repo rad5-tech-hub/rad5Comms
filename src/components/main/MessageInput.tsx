@@ -43,8 +43,8 @@ const MessageInput = ({
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [selectedImage, setSelectedImage] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -76,26 +76,48 @@ const MessageInput = ({
 
   // File handling
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && file.type.startsWith('image/')) {
-      setSelectedImage(file);
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setImagePreview(event.target?.result as string);
-      };
-      reader.readAsDataURL(file);
+    const files = Array.from(e.target.files || []).filter((f) => f.type.startsWith('image/'));
+    if (files.length === 0) return;
+    // append
+    setSelectedImages((prev) => [...prev, ...files]);
+    const urls = files.map((f) => URL.createObjectURL(f));
+    setImagePreviews((prev) => [...prev, ...urls]);
+    // close plus menu/modal
+    setShowPlusMenu(false);
+  };
+
+  const clearAllImages = (revoke = true) => {
+    const previews = [...imagePreviews];
+    if (revoke) {
+      previews.forEach((u) => {
+        try { URL.revokeObjectURL(u); } catch {
+          // Ignore errors if URL was already revoked
+        }
+      });
+    }
+    setSelectedImages([]);
+    setImagePreviews([]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+
+    // If we didn't revoke now (kept for optimistic UI), revoke later
+    if (!revoke && previews.length > 0) {
+      setTimeout(() => {
+        previews.forEach((u) => {
+          try { URL.revokeObjectURL(u); } catch {
+            // Ignore errors if URL was already revoked
+          }
+        });
+      }, 30000);
     }
   };
 
-  const clearImage = (revokeUrl = true) => {
-    if (imagePreview && revokeUrl) {
-      URL.revokeObjectURL(imagePreview);
+  const removeImageAt = (index: number) => {
+    const url = imagePreviews[index];
+    try { URL.revokeObjectURL(url); } catch {
+      // Ignore errors if URL was already revoked
     }
-    setSelectedImage(null);
-    setImagePreview(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    setImagePreviews((prev) => prev.filter((_, i) => i !== index));
+    setSelectedImages((prev) => prev.filter((_, i) => i !== index));
   };
 
   // Audio recording helpers
@@ -166,7 +188,8 @@ const MessageInput = ({
   const handleCreatePoll = () => console.log('Create poll');
 
   const handleSend = async () => {
-    if (!message.trim() || !selectedChat || isSending) return;
+    // Allow sending when there's text OR a selected image OR an audio blob
+    if ((!message.trim() && selectedImages.length === 0 && !audioBlob) || !selectedChat || isSending) return;
 
     const textToSend = message;
 
@@ -177,9 +200,9 @@ const MessageInput = ({
       text: textToSend,
       time: new Date().toISOString(),
       isOwn: true,
-      hasImage: !!selectedImage,
+      hasImage: selectedImages.length > 0,
       hasAudio: !!audioBlob,
-      mediaUrl: imagePreview || (audioBlob ? URL.createObjectURL(audioBlob) : undefined),
+      mediaUrls: imagePreviews.length > 0 ? imagePreviews : audioBlob ? [URL.createObjectURL(audioBlob)] : undefined,
       ...(replyTarget && {
         replyTo: replyTarget.id,
         replyToText: replyTarget.text,
@@ -189,10 +212,9 @@ const MessageInput = ({
 
     onMessageSent?.(optimisticMessage);
     
-    // Clear inputs immediately for better UX
+    // Clear inputs immediately for better UX; keep object URLs for optimistic UI and revoke later
     setMessage('');
-    // Do NOT revoke the URL here, as it's being used by the optimistic message
-    clearImage(false); 
+    clearAllImages(false);
     setAudioBlob(null);
     setRecordingDuration(0);
     if (onCancelReply) onCancelReply();
@@ -202,20 +224,40 @@ const MessageInput = ({
       const token = localStorage.getItem('token');
       if (!token) throw new Error('No token');
 
-      let endpoint = '';
-      if (selectedChat.type === 'channel') {
-        endpoint = `/channels/${selectedChat.id}/messages`;
-      } else {
-        endpoint = `/dms/${selectedChat.id}/messages`;
+      const basePath = selectedChat.type === 'channel'
+        ? `/channels/${selectedChat.id}`
+        : `/dms/${selectedChat.id}`;
+
+      // 1. Upload images (parallel, one by one if backend expects single file)
+      if (selectedImages.length > 0) {
+        const uploadEndpoint = `${API_BASE_URL}${basePath}/upload`;
+        await Promise.all(selectedImages.map((file) => {
+          const fd = new FormData();
+          fd.append('file', file);
+          return axios.post(uploadEndpoint, fd, {
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' },
+          });
+        }));
       }
 
-      // Just POST to REST — server broadcasts to socket room automatically
-      await axios.post(
-        `${API_BASE_URL}${endpoint}`,
-        { text: textToSend, replyTo: replyTarget?.id },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      // No client-side relay needed — server handles the broadcast
+      // 2. Upload audio (if any)
+      if (audioBlob) {
+        const uploadEndpoint = `${API_BASE_URL}${basePath}/upload`;
+        const fd = new FormData();
+        const audioFile = new File([audioBlob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
+        fd.append('file', audioFile);
+        await axios.post(uploadEndpoint, fd, {
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' },
+        });
+      }
+
+      // 3. Send text message (if any)
+      if (textToSend.trim()) {
+        const messageEndpoint = `${API_BASE_URL}${basePath}/messages`;
+        await axios.post(messageEndpoint, { text: textToSend, replyTo: replyTarget?.id }, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      }
     } catch (err: any) {
       console.error('[MessageInput] Send error:', err);
       toast.error(err.response?.data?.error || 'Failed to send message');
@@ -266,17 +308,19 @@ const MessageInput = ({
       )}
 
       {/* Image Preview */}
-      {imagePreview && (
-        <div className="w-full px-4 mb-2 flex justify-start">
-          <div className="relative inline-block">
-            <img src={imagePreview} alt="Preview" className="h-32 w-auto rounded-lg border border-gray-300 shadow-sm object-cover" />
-            <button 
-              onClick={() => clearImage()}
-              className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+      {imagePreviews.length > 0 && (
+        <div className="w-full px-4 mb-2 flex gap-2 flex-wrap justify-start">
+          {imagePreviews.map((preview, index) => (
+            <div key={index} className="relative inline-block">
+              <img src={preview} alt="Preview" className="h-32 w-auto rounded-lg border border-gray-300 shadow-sm object-cover" />
+              <button 
+                onClick={() => removeImageAt(index)}
+                className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
@@ -381,11 +425,11 @@ const MessageInput = ({
             <button
               onClick={handleSend}
               className={`p-1.5 rounded-full flex items-end border justify-end transition ${
-                message.trim() || selectedImage || audioBlob
+                message.trim() || selectedImages.length > 0 || audioBlob
                   ? 'text-black hover:text-blue-600 cursor-pointer'
                   : 'text-gray-400 cursor-not-allowed'
               }`}
-              disabled={(!message.trim() && !selectedImage && !audioBlob) || isSending}
+              disabled={(!message.trim() && selectedImages.length === 0 && !audioBlob) || isSending}
             >
               <Send className="w-4 h-4 md:w-5 md:h-5" />
             </button>

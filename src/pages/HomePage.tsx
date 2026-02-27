@@ -103,6 +103,17 @@ function HomePage() {
             members: Array.isArray(ch.members) ? ch.members : [], // will be spread into selectedChat below
             isAdmin: ch.role === 'admin' || ch.isAdmin === true,
           };
+          // Try to fetch channel media (images, audio, video)
+          try {
+            const mediaRes = await axios.get(`${API_BASE_URL}/channels/${chatId}/media`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const mediaData = Array.isArray(mediaRes.data) ? mediaRes.data : mediaRes.data?.media || [];
+            (fullData as any).media = mediaData;
+          } catch (mediaErr) {
+            console.warn('Failed to fetch channel media', mediaErr);
+            (fullData as any).media = (fullData as any).media || [];
+          }
         } else {
           // DM: fetch user details for bio/avatar if missing
           const res = await axios.get(`${API_BASE_URL}/users/${chatId}`, {
@@ -113,6 +124,17 @@ function HomePage() {
             avatar: user.avatar || extra?.avatar,
             bio: user.bio || extra?.bio,
           };
+          // Try to fetch DM media by recipient ID (selectedChat.id is recipient user id)
+          try {
+            const mediaRes = await axios.get(`${API_BASE_URL}/dms/${chatId}/media`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const mediaData = Array.isArray(mediaRes.data) ? mediaRes.data : mediaRes.data?.media || [];
+            (fullData as any).media = mediaData;
+          } catch (mediaErr) {
+            console.warn('Failed to fetch DM media', mediaErr);
+            (fullData as any).media = (fullData as any).media || [];
+          }
         }
       } catch (err) {
         console.warn('Failed to fetch full chat details:', err);

@@ -186,7 +186,7 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
           chatId = conversationId || selectedChat.id;
           endpointBase = `/dms/${chatId}`;
 
-          console.log('[Main] resolved DM conversation ID:', chatId, '(recipient:', selectedChat.id, ')');
+          // console.log('[Main] resolved DM conversation ID:', chatId, '(recipient:', selectedChat.id, ')');
           setResolvedDmId(chatId);
         }
 
@@ -211,10 +211,51 @@ const Main = ({ isThreadOpen, toggleThreadPane, onBack, selectedChat }: MainProp
           }
           return m;
         });
-        setMessages(normalized);
+        // Merge any media metadata (from selectedChat.media) into messages
+        const mediaList: any[] = (selectedChat as any)?.media || [];
+        const mediaByMessage = new Map<string, any[]>();
+        if (Array.isArray(mediaList)) {
+          mediaList.forEach((m: any) => {
+            const mid = m.messageId || m.message_id || m.id || m.msgId || m.message || null;
+            if (mid) {
+              const key = String(mid);
+              if (!mediaByMessage.has(key)) mediaByMessage.set(key, []);
+              mediaByMessage.get(key)!.push(m);
+            }
+          });
+        }
+
+        const merged = normalized.map((m: any) => {
+          const list = mediaByMessage.get(String(m.id));
+          if (list && list.length > 0) {
+            const item = list[0];
+            return {
+              ...m,
+              mediaUrl: item.url || item.uri || item.path || item.file || m.mediaUrl,
+              hasImage: (item.type || '').startsWith('image') || m.hasImage,
+              hasAudio: (item.type || '').startsWith('audio') || m.hasAudio,
+              duration: item.duration || item.length || m.duration,
+            };
+          }
+
+          // Fallback: if message text contains a direct URL, infer type
+          if (!m.mediaUrl && typeof m.text === 'string') {
+            const urlMatch = m.text.match(/(https?:\/\/\S+)/);
+            if (urlMatch) {
+              const url = urlMatch[0];
+              const isImage = /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
+              const isAudio = /\.(mp3|wav|ogg|m4a)(\?|$)/i.test(url);
+              return { ...m, mediaUrl: url, hasImage: isImage, hasAudio: isAudio };
+            }
+          }
+
+          return m;
+        });
+
+        setMessages(merged);
 
         // Mark all fetched messages as read
-        const messageIds = normalized.map((m: any) => m.id);
+        const messageIds = merged.map((m: any) => m.id);
         if (messageIds.length > 0) {
           if (selectedChat.type === 'channel') {
             channelMarkRead(messageIds);
